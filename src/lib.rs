@@ -1,12 +1,5 @@
 // Memory mapped transaction protected file storage allocator for Rust
 
-
-// Pass this to all containers to be stored as the generic argument A.
-pub struct Allocator<const ARENA_ID: u8>;
-
-impl<const ARENA_ID: u8> Allocator<ARENA_ID> {
-}
-
 pub struct Accessor<const ARENA_ID: u8, Root> {
 }
 
