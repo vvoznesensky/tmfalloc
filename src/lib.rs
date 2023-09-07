@@ -5,6 +5,8 @@ use std::sync::atomic::Ordering
 use std::sync::RWLock
 use std::io::{Result, Error}
 use std_semaphore
+XXX Use ctor crate for initialization of memory map and SEGV handler.
+use ctor 
 
 // Panic on file problems. No graceful error handling available on startup.
 macro_rules! panic_syserr {
@@ -60,7 +62,7 @@ macro_rules! array {
 }
 
 type OMA = Option<mut Arena>>;
-pub static mut arenas: [RWLock<OMA>; 256] = array![RwLock<OMA>>(None); 256];
+pub static mut arenas: [RwLock<OMA>; 256] = array![RwLock<OMA>>(None); 256];
 
 ////////////////////////////////////////////////////////////////////////////////
 // ArenaHolder: RAII fixture to initialize the database files and mmapping.
@@ -223,7 +225,9 @@ struct ReadAccessor<const IDX: u8, Root> {
 
 impl<const IDX: u8, Root> ReadAccessor<u8, Root> {
     fn root(&self) -> Root {
-        match arenas_read[IDX].borrow
+        match *arenas_read[IDX].borrow {
+            
+        }
     }
 }
 impl<const IDX: u8, Root> Dump for ReadAccessor<u8, Root> {
