@@ -69,11 +69,11 @@ pub static mut arenas: [RwLock<OMA>; 256] = array![RwLock<OMA>>(None); 256];
 // Create it once in your code for every IDX that you have chosen.
 // Do not mess up with the Root type: this crate cannot figure out if the type
 // of root object has been changed someway.
-pub struct ArenaHolder<const IDX: u8, Root>;
+pub struct ArenaHolder<const IDX: u8, Root: Default>;
 
-impl<const IDX: u8, Root> ArenaHolder {
+impl<const IDX: u8, Root: Default> ArenaHolder<IDX, Root> {
     pub fn new(file_pfx: &str, arena_address: usize,
-                    arena_size: usize) -> std::io::Result<Self> {
+                    arena_size: usize, magick: u8) -> std::io::Result<Self> {
         let mut aowg = arenas[IDX].write().unwrap();
         let &mut ao = aowg.deref_mut();
         match ao {
@@ -104,7 +104,9 @@ impl<const IDX: u8, Root> ArenaHolder {
                                 readers: AtomicUSize::new(0)
                             };
                             flock_w(fd);
-                            rollback<false>(fd, ld, s, page_size);
+                            if check_header<Root> {
+                                rollback<false>(fd, ld, s, page_size);
+                            }
                             unflock(fd);
                             return Ok(Self);
                         }
@@ -216,17 +218,40 @@ fn unflock(fd: libc::c_int) {
     panic_syserr!(libc::flock(self.fd, libc::LOCK_UN));
 }
 
+// Header stored in file
+struct Header<Root: Default> {
+    magick: u64,    // To check the file
+    current: usize, // Next piece of the bump allocator
+    root: Root,     // The root object.
+}
+
+// The file must be locked by flock_w and RwLock.write()
+fn check_header<Root: Default>(magick: u64, mem: *mut[u8]) -> bool {
+    let ptr = mem as *Header<Root>;
+    if ptr.magick != magick {
+        *ptr = Header<Root> {
+            magick: magick,
+            current: std::mem::size_of<Header<Root>>,
+            root: Default::default()
+        };
+        false
+    } else true
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Read accessor to allow storage concurrent read access.
-
-struct ReadAccessor<const IDX: u8, Root> {
-    holder: &ArenaHolder<IDX>,
+struct ReadAccessor<'a, const IDX: u8, Root: Default> {
+    holder: &a' ArenaHolder<IDX>,
 };
-
-impl<const IDX: u8, Root> ReadAccessor<u8, Root> {
-    fn root(&self) -> Root {
+impl<const IDX: u8, Root> ReadAccessor<u8, Root: Default> {
+}
+impl<const IDX: u8, Root> Deref for ReadAccessor<u8, Root> {
+    fn map(&self) -> Root {
         match *arenas_read[IDX].borrow {
-            
+            None => panic!("ReadAccessor without able arenas_read element?!"),
+            Some(rlrg) => {
+
+            }
         }
     }
 }
@@ -236,6 +261,8 @@ impl<const IDX: u8, Root> Dump for ReadAccessor<u8, Root> {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Read accessor to allow storage exclusive write access.
 struct WriteAccessor<const IDX: u8, Root>;
 impl WriteAccessor {
     fn dump(&mut self) {
