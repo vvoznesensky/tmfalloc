@@ -1,35 +1,35 @@
 // Transaction protected arena for memory mapped file storage allocator
-use std::libc
-use std::sync::atomic::{atomic_load, atomic_compare_and_swap, atomic_sub}
-use std::sync::atomic::Ordering
-use std::sync::RWLock
-use std::io::{Result, Error}
-use std_semaphore
-XXX Use ctor crate for initialization of memory map and SEGV handler.
-use ctor 
+use std::libc;
+use std::sync::{RwLock, Mutex};
+use std::thread;
+use std::io::{Result, Error};
+use ctor; // For initialization of SEGV handler.
+
+use nix::sys::signal::{
+    sigaction, SigAction, SigHandler, SaFlags, SigSet, Signal};
 
 // Panic on file problems. No graceful error handling available on startup.
 macro_rules! panic_syserr {
-    ( $( $rval:expr ) ) => {
+    ( $rval:expr ) => { {
         let rval = $rval;
-        if $rval == -1 {
+        if rval == -1 {
             let errno = *libc::__errno_location();
             let se = libc::strerror(errno);
             assert!(errno > 0);
             panic!(concat!("System error #{}: {}"), errno, se);
         }
         rval
-    }
+    } }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Arena: internal structure to hold all the file and mapping stuff statically.
-struct Arena {
+struct Arena<'a> {
     idx: u8,
-    fd: libc::c_int,
+    fd: libc::c_int,     // Main file, mapped onto mem.
     log_fd: libc::c_int, // Log file, consists of pairs (u32 page #, page).
-    mem: RwLock<&mut[u8]>, // Protects memory slice and flock in LOCK_SH mode.
-    size: libc::size_t,
+    mem: &'a mut[u8],
+    readers: Mutex<u32>, // Number of readers to apply and revoke flock once.
     page_size: libc::c_long,
 }
 
@@ -61,8 +61,9 @@ macro_rules! array {
     [$e:expr; $n:tt] => { array!(@accum ($n, $e) -> ()) };
 }
 
-type OMA = Option<mut Arena>>;
-pub static mut arenas: [RwLock<OMA>; 256] = array![RwLock<OMA>>(None); 256];
+type OA<'a> = Option<Arena<'a>>;
+pub static mut arenas: [RwLock::<OA::<'static>>; 256] =
+    array![RwLock::<OA::<'static>>>(None); 256];
 
 ////////////////////////////////////////////////////////////////////////////////
 // ArenaHolder: RAII fixture to initialize the database files and mmapping.
@@ -79,16 +80,16 @@ impl<const IDX: u8, Root: Default> ArenaHolder<IDX, Root> {
         match ao {
             Some(a) => { panic!("Arena {} already initialized", IDX); },
             None => {
-                let result: std::io::Result<()>
-                let fname = String::format!("{}.obj", file_pfx);
+                let result: std::io::Result<Self>;
+                let fname = std::format!("{}.obj", file_pfx);
                 let fd = libc::open(fname.as_bytes(), libc::O_CREAT);
                 if fd != -1 {
-                    let lname = String::format!("{}.log", file_pfx);
+                    let lname = std::format!("{}.log", file_pfx);
                     let ld = libc::open(lname.as_bytes(), libc::O_CREAT);
                     if fd != -1 {
                         let aa = arena_address as *mut c_void;
                         let page_size = libc::sysconf(libc::_SC_PAGE_SIZE);
-                        assert_neq!(page_size, -1);
+                        assert_ne!(page_size, -1);
                         let addr = libc::mmap(aa, arena_size, PROT_READ,
                             libc::MAP_SHARED_VALIDATE|libc::MAP_FIXED_NOREPLACE,
                             fd, 0);
@@ -99,13 +100,13 @@ impl<const IDX: u8, Root: Default> ArenaHolder<IDX, Root> {
                                 idx: IDX,
                                 fd: fd,
                                 log_fd: ld,
-                                mem: RwLock::new(s),
+                                mem: s,
+                                readers: Mutex::new(0),
                                 page_size: page_size,
-                                readers: AtomicUSize::new(0)
                             };
                             flock_w(fd);
-                            if check_header<Root> {
-                                rollback<false>(fd, ld, s, page_size);
+                            if check_header::<Root>(magick, s, ld) {
+                                rollback::<false>(fd, ld, s, page_size);
                             }
                             unflock(fd);
                             return Ok(Self);
@@ -118,12 +119,31 @@ impl<const IDX: u8, Root: Default> ArenaHolder<IDX, Root> {
             }
         }
     }
-    pub fn write() -> WriteAccessor {
-        self.lock.read().unwrap()
-        XXX Извлечь Accessor-ы.
+    pub fn write() -> WriteAccessor::<> {
+        let mut aowg = arenas[IDX].write().unwrap();
+        let &mut ao = aowg.deref_mut();
+        match ao {
+            None => { panic!("Arena {} not initialized", IDX); },
+            Some(a) => {
+                flock_w(a.fd);
+                arenas_write[IDX] = RefCell::new(Some::new(a));
+                setsegv::<IDX>(&a.mem);
+                WriteAccessor::<IDX, Root> { guard: aowg, }
+            }
+        }
     }
     pub fn read() -> ReadAccessor {
-        XXX
+        let mut aowg = arenas[IDX].read().unwrap();
+        let &mut ao = aowg.deref();
+        match ao {
+            None => { panic!("Arena {} not initialized", IDX); },
+            Some(a) => {
+                let readers = a.readers.get_mut();
+                if readers == 0 { flock_r(a.fd); }
+                readers += 1;
+                ReadAccessor::<IDX, Root> {}
+            }
+        }
     }
 }
 
@@ -135,7 +155,7 @@ impl<const IDX: u8, Root> Drop for ArenaHolder<IDX, Root> {
             Some(a) => {
                 let mem = a.mem.try_write().unwrap();
                 flock_w(a.fd);
-                rollback<true>(a.fd, a.log_fd, mem, a.page_size);
+                rollback::<true>(a.fd, a.log_fd, mem, a.page_size);
                 unflock(a.fd);
                 panic_syserr!(libc::close(a.log_fd));
                 panic_syserr!(libc::munmap(
@@ -164,13 +184,12 @@ fn rollback<const PAGES_WRITABLE: bool>(fd: libc::c_int, lfd: libc::c_int,
         let offset = page_no * page_size;
         let addr = &mem[offset] as *mut c_void;
         if !PAGES_WRITABLE {
-            assert!(addr == libc::mmap(addr, page_size, libc::PROT_WRITE,
-                libc::MAP_SHARED_VALIDATE|libc::MAP_FIXED, fd, offset);
+            assert_eq!(addr, libc::mprotect(addr, page_size, libc::PROT_WRITE));
         }
         panic_syserr!(libc::read(lfd, ptr, page_size));
-        assert!(addr == libc::mmap(addr, page_size, libc::PROT_READ,
-            libc::MAP_SHARED_VALIDATE|libc::MAP_FIXED, fd, offset);
+        assert_eq!(addr, libc::mprotect(addr, page_size, libc::PROT_READ));
     }
+    sync(fd);
     truncate(lfd);
 }
 
@@ -182,10 +201,11 @@ fn commit(fd: libc::c_int, lfd: libc::c_int,
             mem: &mut[u8], page_size: libc::size_t) {
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
     loop {
-        let addr = libc::mmap(mem.first_mut().unwarp(), mem.len(), PROT_READ,
-            libc::MAP_SHARED_VALIDATE|libc::MAP_FIXED_NOREPLACE, fd, 0);
+        let addr = libc::mprotect(mem.first_mut().unwarp(), mem.len(),
+                                                                    PROT_READ);
         panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
     }
+    sync(fd);
     truncate(lfd);
 }
 
@@ -207,6 +227,11 @@ fn truncate(lfd: libc::c_int) {
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
 }
 
+// File sync
+fn sync(lfd: libc::c_int) {
+    panic_syserr!(libc::fdatasync(lfd));
+}
+
 // Flock the main file.
 fn flock_w(fd: libc::c_int) {
     panic_syserr!(libc::flock(self.fd, libc::LOCK_EX));
@@ -218,64 +243,208 @@ fn unflock(fd: libc::c_int) {
     panic_syserr!(libc::flock(self.fd, libc::LOCK_UN));
 }
 
+// Currently the simpliest bump allocator.
+fn alloc<const IDX: u8>(mem: &mut[u8], layout: Layout) ->
+        Result<NonNull<[u8]>, AllocError> {
+    let h = mem.as_ptr() as *mut HeaderOfHeader;
+    let max_size = mem.len();
+    let na = h.addr.byte_offset(h.current);
+    let s = (na as *const u8).align_offset(layout.align()) + layout.size();
+    h.current += s;
+    if h.current > max_size {
+        return Err(AllocError::fmt("Out of MMTS arena #{}", IDX).unwrap())
+    } else {
+        return Ok(NonNull::slice_from_raw_parts(na, s))
+    }
+}
+
+unsafe fn dealloc(mem: &mut[u8], ptr: NonNull<u8>, layout: Layout) {}
+
+////////////////////////////////////////////////////////////////////////////////
+// SEGV and it's handler memory map
+fn setsegv<const IDX: u8>(mem: &[u8]) {
+    let b = &mem.first().unwrap();
+    let e = &mem.last().unwrap();
+    match mem_map {
+        None => mem_map = Some(BTreeMap<*c_void, u8>::new()),
+        Some(map) => {
+            let c = map.upper_bound(Bound::Included(b));
+            if let Some((l, (u,))) = c.key_value() {
+                assert!(u < b);
+                c.move_next();
+                if let Some((l, (u,))) = c.key_value() { assert!(e < l); }
+            }
+        }
+    }
+    match mem_map {
+        None => panic!("Could not happen"),
+        Some(map) => {
+            map.insert(b, (e, IDX));
+        }
+    }
+}
+
+fn remsegv<const IDX: u8> (mem: &[u8]) {
+    match mem_map {
+        None => panic!("Write accessor without a piece in mem_map"),
+        Some(map) => {
+            let b = &mem.first().unwrap();
+            let e = &mem.last().unwrap();
+            assert_eq!(map.remove(b), (e, IDX));
+        }
+    }
+}
+
+fn save_page(idx: u8, addr: *const u8) {
+    let a = &arenas_write[idx].unwrap();
+    let offset = addr.align_offset(a.page_size) as isize;
+    let begin = addr.byte_offset(offset - a.page_size);
+    assert_eq!(begin.align_offset(a.page_size), 0);
+    assert!(begin >= a.mem.as_ptr());
+    let page_no: u32 = (begin - a.mem.as_ptr()) as usize / a.page_size;
+    panic_syserr!(libc::write(a.log_fd, &page_no, 4));
+    panic_syserr!(libc::write(a.log_fd, &begin, a.page_size));
+    sync(a.log_fd);
+    assert_eq!(addr, libc::mprotect(begin, a.page_size, libc::PROT_WRITE));
+}
+
+extern "C" fn sighandler(signum: c_int, info: *mut siginfo_t,
+                            ucontext: *mut c_void) {
+    assert_eq!(signum, libc::SIG_SEGV);
+    match mem_map {
+        None => panic!("Could not happen"),
+        Some(map) => {
+            let addr = info.si_addr() as *mut u8;
+            let c = map.upper_bound(Bound::Included(addr));
+            if let Some((l, (u, idx))) = c.key_value() {
+                if u >= addr { save_page(idx, addr); return; }
+            }
+            let oa = oldact.unwrap();
+            if !oa.mask().contains(signum) {
+                match oa.handler {
+                    SigDfl => libc::kill(libc::getpid(), libc::SIGABRT),
+                    SigIgn => break,
+                    Handler(f) => f(signum),
+                    SigAction(f) => f(signum, info, ucontext),
+                }
+            }
+        }
+    }
+}
+
+thread_local! {
+    static mem_map: Option<BTreeMap<*const c_void, (*const c_void, u8)>> = None;
+}
+
+// Sigaction stuff: signal handler, install/remove it on crate load/remove.
+static mut oldact: Option<SigAction> = None;
+
+#[ctor::ctor]
+fn initialize() {
+    assert_eq!(oldact, None);
+    let act = SigAction::new(SigHandler::SigAction(sighandler),
+               SaFlags::SA_RESTART.union(SaFlags::SA_SIGINFO), SigSet::empty());
+    oldact = Some(sigaction(Signal::SEGV, act).unwrap());
+}
+
+#[ctor::dtor]
+fn finalize() {
+    sigaction(Signal::SEGV, oldact.unwrap()).unwrap();
+    oldact = None;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Header stored in file
-struct Header<Root: Default> {
+#[repr(C, align(8))]
+struct HeaderOfHeader {
     magick: u64,    // To check the file
     current: usize, // Next piece of the bump allocator
+}
+#[repr(C, align(8))]
+struct Header<Root: Default> {
+    h: HeaderOfHeader,
     root: Root,     // The root object.
 }
 
 // The file must be locked by flock_w and RwLock.write()
-fn check_header<Root: Default>(magick: u64, mem: *mut[u8]) -> bool {
-    let ptr = mem as *Header<Root>;
+fn check_header<Root: Default>(magick: u64, mem: *mut[u8], lfd: c_int) -> bool {
+    let ptr = mem as *mut Header<Root>;
     if ptr.magick != magick {
-        *ptr = Header<Root> {
-            magick: magick,
-            current: std::mem::size_of<Header<Root>>,
+        truncate(lfd);
+        *ptr = Header::<Root> {
+            h: HeaderOfHeader {
+                magick: magick,
+                current: std::mem::size_of::<Header<Root>>,
+            },
             root: Default::default()
         };
         false
-    } else true
+    } else { true }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Read accessor to allow storage concurrent read access.
 struct ReadAccessor<'a, const IDX: u8, Root: Default> {
-    holder: &a' ArenaHolder<IDX>,
-};
-impl<const IDX: u8, Root> ReadAccessor<u8, Root: Default> {
+    holder: &'a ArenaHolder<IDX>,
 }
 impl<const IDX: u8, Root> Deref for ReadAccessor<u8, Root> {
-    fn map(&self) -> Root {
-        match *arenas_read[IDX].borrow {
-            None => panic!("ReadAccessor without able arenas_read element?!"),
-            Some(rlrg) => {
-
-            }
+    // type Target: Root;
+    fn deref(&self) -> &Root {
+        let mut aowg = arenas[IDX].read().unwrap();
+        let &mut ao = aowg.deref();
+        match ao {
+            None => { panic!("Arena {} not initialized", IDX); },
+            Some(a) => *(a.mem as *const Header<Root>).root,
         }
     }
 }
 impl<const IDX: u8, Root> Dump for ReadAccessor<u8, Root> {
     fn dump(&mut self) {
-        XXX сделать unflock, если получается mem.try_borrow_mut
+        let mut aowg = arenas[IDX].read().unwrap();
+        let &mut ao = aowg.deref();
+        match ao {
+            None => { panic!("Arena {} not initialized", IDX); },
+            Some(a) => {
+                let readers = a.readers.get_mut();
+                if readers == 1 { unflock(a.fd); }
+                readers -= 1;
+            }
+        }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Read accessor to allow storage exclusive write access.
-struct WriteAccessor<const IDX: u8, Root>;
-impl WriteAccessor {
-    fn dump(&mut self) {
-        XXX утвердиться в том, что получается mem.borrow_mut
-        XXX сделать unflock
+// Write accessor to allow storage exclusive write access.
+struct WriteAccessor<'a, const IDX: u8, Root> {
+    guard: RwLockWriteGuard<'a, Arena>,
+}
+impl<const IDX: u8, Root> DerefMut for WriteAccessor<'a, IDX, Root> {
+    fn deref_mut() -> &'a mut Root {
+        match arenas_write[IDX].borrow().deref_mut() {
+            None => panic!("Dereferencing WriteAccessor without arena handler"),
+            Some(a) => *(a.mem as *mut Header<Root>).root,
+        }
+    }
+}
+impl<const IDX: u8, Root> Drop for WriteAccessor<'_, IDX, Root> {
+    fn drop(&mut self) {
+        let arwlg = arenas_write[IDX].borrow().deref_mut();
+        match arwlg {
+            None => panic!("Dropping WriteAccessor without arena handler"),
+            Some(a) => {
+                rollback::<true>(a.fd, a.log_fd, a.mem, a.page_size);
+                remsegv::<IDX>(&a.mem);
+                unflock(a.fd);
+                arwlg = RefCell::new(None);
+            }
+        }
     }
 }
 
-thread_local! {
-    pub static mut arenas_write: [RefCell<Option<RwLockWriteGuard<'_, OMA>>>;
-        256] = [RefCell::new(None); 256];
-    pub static mut arenas_read: [RefCell<Option<RwLockReadGuard<'_, OMA>>>;
-        256] = [RefCell::new(None); 256];
+thread_local!{
+    static arenas_write: [
+        RefCell<Option<RwLockReadGuard<'static, Arena>>>; 256] =
+            [RefCell::new(None); 256];
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -284,25 +453,21 @@ pub struct Allocator<const IDX: u8>;
 
 impl<const ARENA_ID: u8> alloc::Allocator for Allocator<ARENA_ID> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let a = &mut arenas[ARENA_ID]
-        assert!(a.fd >= 0, "MMTS arena #{} not initalized", ARENA_ID)
-        let s: size_t
-        let b = current_bump.load(Ordering::Acquire)
-        let na = a.addr.byte_offset(b)
-        loop {
-            s = (na as *u8).align_offset(layout.align()) + layout.size()
-            let n = a.current_bump.compare_and_swap(b, b + s, Ordering::SeqCst)
-            if n == b break;
-            na = a.addr.byte_offset(b)
-        }
-        if b + s > a.size {
-            return Err(AllocError::fmt("Out of MMTS arena #{}", ARENA_ID).
-                       unwrap())
-        } else {
-            return Ok(NonNull::slice_from_raw_parts(na, s)
+        let go = &mut arenas_write[ARENA_ID].borrow_mut();
+        match go {
+            None => panic!("Arena #{} have no thread's accessor for writing",
+                           ARENA_ID),
+            Some(mg) => alloc(mg, layout)
         }
     }
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {}
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        let go = &mut arenas_write[ARENA_ID].borrow_mut();
+        match go {
+            None => panic!("Arena #{} have no thread's accessor for writing",
+                           ARENA_ID),
+            Some(mg) => dealloc(mg, ptr, layout)
+        }
+    }
 }
 
 #[cfg(test)]
