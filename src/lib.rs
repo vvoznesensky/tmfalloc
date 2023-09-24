@@ -6,15 +6,15 @@
 use ctor;
 use errno::{errno};
 use libc;
+use libc::{c_int, c_void};
 use nix::sys::signal::{
     sigaction, SigAction, SigHandler, SaFlags, SigSet, Signal};
 use std::alloc;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, btree_map::Cursor};
+use std::collections::BTreeMap;
 use std::marker;
 use std::ops;
 use std::ptr;
-use std::rc::Rc;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Mutex, Arc};
 
 // Panic on file problems.
@@ -32,9 +32,9 @@ macro_rules! panic_syserr {
 ////////////////////////////////////////////////////////////////////////////////
 // Arena: internal structure to hold all the file and mapping stuff.
 struct Arena {
-    fd: libc::c_int,     // Main file, mapped onto mem.
-    log_fd: libc::c_int, // Log file, consists of pairs (u32 page #, page).
-    mem: *mut libc::c_void,
+    fd: c_int,     // Main file, mapped onto mem.
+    log_fd: c_int, // Log file, consists of pairs (u32 page #, page).
+    mem: *mut c_void,
     size: usize,
     readers: Mutex<u32>, // Number of readers to apply and revoke flock once.
     page_size: usize,
@@ -63,6 +63,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl<'a, Root: 'a + Default> Holder<'a, Root> {
     pub fn new(file_pfx: &str, arena_address: usize,
                     arena_size: usize, magick: u64) -> Result<Self> {
+        let ps = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+        assert!(ps > 0);
+        let page_size = ps as usize;
+        assert!(page_size.is_power_of_two());
         let fname = std::format!("{}.odb\0", file_pfx);
         let fd = unsafe {
             libc::open(fname.as_ptr() as *const i8, libc::O_CREAT)
@@ -74,11 +78,7 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
                 libc::open(lname.as_ptr() as *const i8, libc::O_CREAT)
             };
             if ld != -1 {
-                let aa = arena_address as *mut libc::c_void;
-                let page_size = unsafe {
-                    libc::sysconf(libc::_SC_PAGE_SIZE)
-                };
-                assert_ne!(page_size, -1);
+                let aa = arena_address as *mut c_void;
                 let addr = unsafe {
                     libc::mmap(aa, arena_size, libc::PROT_READ,
                         libc::MAP_SHARED_VALIDATE|libc::MAP_FIXED_NOREPLACE,
@@ -91,7 +91,7 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
                         mem: addr,
                         size: arena_size,
                         readers: Mutex::new(0),
-                        page_size: page_size as usize,
+                        page_size: page_size,
                     };
                     let arena = Arc::new(RwLock::new(arena));
                     let s = Self { arena: arena, phantom: marker::PhantomData };
@@ -128,11 +128,11 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         let guard = self.arena.write().unwrap();
         flock_w(guard.fd);
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
-            guard: Rc::new(RefCell::new(guard)),
-            arena: Arc::clone(&self.arena),
+            guard: guard,
+            _arena: Arc::clone(&self.arena),
             phantom: marker::PhantomData,
         };
-        rv.setseg(Rc::clone(&rv.guard));
+        rv.setseg();
         rv
     }
     pub fn write(&mut self) -> Writer<Root> { self.internal_write::<true>() }
@@ -157,11 +157,11 @@ impl Drop for Arena {
 // Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
 // access of mem for this thread among threads that have access to this fd.
 // For further use in Holder and Writer.
-fn rollback<const PAGES_WRITABLE: bool>(fd: libc::c_int, lfd: libc::c_int,
-            mem: *mut libc::c_void, page_size: usize) {
+fn rollback<const PAGES_WRITABLE: bool>(fd: c_int, lfd: c_int,
+            mem: *mut c_void, page_size: usize) {
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
     let mut page_no: u32 = 0; // 0 for suppressing compilation error
-    let pgn_ptr = (&mut page_no as *mut u32) as *mut libc::c_void;
+    let pgn_ptr = (&mut page_no as *mut u32) as *mut c_void;
     while read_exactly(lfd, pgn_ptr, 4)
             == 4 {
         let offset = (page_no as usize) * page_size;
@@ -180,8 +180,7 @@ fn rollback<const PAGES_WRITABLE: bool>(fd: libc::c_int, lfd: libc::c_int,
 // Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
 // access of mem for this thread among threads that have access to this fd.
 // For further use in WriterAccessor.
-fn commit(fd: libc::c_int, lfd: libc::c_int, mem: *mut libc::c_void,
-                                size: libc::size_t) {
+fn commit(fd: c_int, lfd: c_int, mem: *mut c_void, size: libc::size_t) {
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
     panic_syserr!(libc::mprotect(mem, size, libc::PROT_READ));
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
@@ -190,8 +189,7 @@ fn commit(fd: libc::c_int, lfd: libc::c_int, mem: *mut libc::c_void,
 }
 
 // Read exactly count bytes or end from the file.
-fn read_exactly(lfd: libc::c_int, buf: *mut libc::c_void,
-                count: libc::size_t) -> usize { 
+fn read_exactly(lfd: c_int, buf: *mut c_void, count: libc::size_t) -> usize { 
     let mut s: usize;
     let mut rval: usize = 0;
     let mut c = count;
@@ -205,24 +203,24 @@ fn read_exactly(lfd: libc::c_int, buf: *mut libc::c_void,
 }
 
 // Making log file ready for the next transaction.
-fn truncate(lfd: libc::c_int) {
+fn truncate(lfd: c_int) {
     panic_syserr!(libc::ftruncate(lfd, 0));
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
 }
 
 // File sync
-fn sync(lfd: libc::c_int) {
+fn sync(lfd: c_int) {
     panic_syserr!(libc::fdatasync(lfd));
 }
 
 // Flock the main file.
-fn flock_w(fd: libc::c_int) {
+fn flock_w(fd: c_int) {
     panic_syserr!(libc::flock(fd, libc::LOCK_EX));
 }
-fn flock_r(fd: libc::c_int) {
+fn flock_r(fd: c_int) {
     panic_syserr!(libc::flock(fd, libc::LOCK_SH));
 }
-fn unflock(fd: libc::c_int) {
+fn unflock(fd: c_int) {
     panic_syserr!(libc::flock(fd, libc::LOCK_UN));
 }
 
@@ -248,67 +246,68 @@ unsafe fn deallocate(_from_size: (*const u8, usize), _ptr: ptr::NonNull<u8>,
 // SEGV and it's handler memory map
 impl<Root, const PAGES_WRITABLE: bool>
         InternalWriter<'_, Root, PAGES_WRITABLE> {
-    fn setseg(&self, write_guard: WG) {
-        let bg = write_guard.borrow();
-        let s = bg.size;
-        let b = bg.mem as *const libc::c_void;
+    fn setseg(&self) {
+        let g = &self.guard;
+        let s = g.size;
+        let b = g.mem as *const c_void;
         let e = unsafe{b.byte_offset(s as isize)};
-        with_upper_bound_cursor(b, |mut c| {
-            if let Some((l, (s, _))) = c.key_value() {
-                assert!(unsafe{l.byte_offset(*s as isize)} <= b);
+        MEM_MAP.with(|m| {
+            let mb = m.borrow();
+            let mut c = mb.upper_bound(ops::Bound::Included(&b));
+            if let Some((l, ta)) = c.key_value() {
+                assert!(unsafe{l.byte_offset(ta.size as isize)} <= b);
                 c.move_next();
                 if let Some((l, _)) = c.key_value() { assert!(*l >= e); }
             }
         });
-        drop(bg);
-        mem_map.with(|m| { m.borrow_mut().insert(b, (s, write_guard)); });
+        MEM_MAP.with(|m| { m.borrow_mut().insert(b, ThreadArena{
+            size: s, log_fd: g.log_fd, page_size: g.page_size}); });
     }
 
     fn remseg(&self) {
         let g = &self.guard;
-        let bg = g.borrow();
-        let b = bg.mem as *const libc::c_void;
-        mem_map.with_borrow_mut(|m| {
+        let b = g.mem as *const c_void;
+        MEM_MAP.with_borrow_mut(|m| {
             let r = m.remove(&b).unwrap();
-            assert_eq!(r.0, bg.size);
-            drop(bg);
-            assert!(Rc::ptr_eq(&r.1, &g));
+            assert_eq!(r, ThreadArena{
+                    size: g.size, log_fd: g.log_fd, page_size: g.page_size});
         });
     }
 }
 
-fn save_old_page(arena: &RwLockWriteGuard<Arena>,
-        addr: *const libc::c_void) {
-    let offset = addr.align_offset(arena.page_size) as isize;
-    let begin = unsafe{ addr.byte_offset(offset - (arena.page_size) as isize) };
-    assert_eq!(begin.align_offset(arena.page_size), 0);
-    assert!(begin >= arena.mem);
-    let page_no: u32 = u32::try_from(unsafe{begin.byte_offset_from(arena.mem)} /
-        (arena.page_size as isize)).unwrap();
-    assert!(page_no >= 0);
-    assert!(arena.size / arena.page_size > (page_no as usize));
+fn save_old_page(mem: *const c_void, size: usize, log_fd: c_int,
+                                        page_size: usize, addr: *const c_void) {
+    let offset = addr.align_offset(page_size) as isize;
+    let begin = unsafe{ addr.byte_offset(offset - (page_size) as isize) };
+    assert_eq!(begin.align_offset(page_size), 0);
+    assert!(begin >= mem);
+    let pn = unsafe{begin.byte_offset_from(mem)} / (page_size as isize);
+    let page_no: u32 = u32::try_from(pn).unwrap();
+    assert!(size / page_size > (page_no as usize));
     // XXX use writev
-    panic_syserr!(libc::write(arena.log_fd,
-            std::ptr::from_ref::<u32>(&page_no) as *const libc::c_void, 4));
-    panic_syserr!(libc::write(arena.log_fd, begin, arena.page_size));
-    sync(arena.log_fd);
-    panic_syserr!(libc::mprotect(begin as *mut libc::c_void, arena.page_size,
+    panic_syserr!(libc::write(log_fd,
+            std::ptr::from_ref::<u32>(&page_no) as *const c_void, 4));
+    panic_syserr!(libc::write(log_fd, begin, page_size));
+    sync(log_fd);
+    panic_syserr!(libc::mprotect(begin as *mut c_void, page_size,
                                                             libc::PROT_WRITE));
 }
 
-extern "C" fn sighandler(signum: libc::c_int, info: *mut libc::siginfo_t,
-                            ucontext: *mut libc::c_void) {
+extern "C" fn sighandler(signum: c_int, info: *mut libc::siginfo_t,
+                            ucontext: *mut c_void) {
     assert_eq!(signum, libc::SIGSEGV);
-    let addr = unsafe{info.as_ref().unwrap().si_addr()} as *const libc::c_void;
-    with_upper_bound_cursor(addr, |c| {
-        if let Some((l, (s, a))) = c.key_value() {
-            if addr < unsafe{l.byte_offset(*s as isize)} {
-                save_old_page(&*a.borrow(), addr);
+    let addr = unsafe{info.as_ref().unwrap().si_addr()} as *const c_void;
+    MEM_MAP.with(|m| {
+        let mb = m.borrow();
+        let c = mb.upper_bound(ops::Bound::Included(&addr));
+        if let Some((l, ta)) = c.key_value() {
+            if addr < unsafe{l.byte_offset(ta.size as isize)} {
+                save_old_page(*l, ta.size, ta.log_fd, ta.page_size, addr);
                 return;
             }
         }
     });
-    let oa = unsafe { oldact.unwrap() };
+    let oa = unsafe { OLDACT.unwrap() };
     if !oa.mask().contains(Signal::try_from(signum).unwrap()) {
         match oa.handler() {
             SigHandler::SigDfl => { 
@@ -321,36 +320,33 @@ extern "C" fn sighandler(signum: libc::c_int, info: *mut libc::siginfo_t,
     }
 }
 
-type WG = Rc<RefCell<RwLockWriteGuard<'static, Arena>>>;
-type MMV = (usize, WG);
-type MM = RefCell<BTreeMap<*const libc::c_void, MMV>>;
-thread_local! {
-    static mem_map: MM = const { RefCell::new(BTreeMap::new()) };
+#[derive(PartialEq, Debug)]
+struct ThreadArena {
+    size: usize,
+    log_fd: c_int,
+    page_size: usize,
 }
-
-fn with_upper_bound_cursor<F, R>(a: *const libc::c_void, f: F) -> R
-        where F: FnOnce(Cursor<'static, *const libc::c_void, MMV>) -> R {
-    mem_map.with_borrow(|m| {
-        f(m.upper_bound(ops::Bound::Included(&a)))
-    })
+thread_local! {
+    static MEM_MAP: RefCell<BTreeMap<*const c_void, ThreadArena>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 // Sigaction stuff: signal handler, install/remove it on crate load/remove.
-static mut oldact: Option<SigAction> = None;
+static mut OLDACT: Option<SigAction> = None;
 
 #[ctor::ctor]
 fn initialize() {
-    unsafe{ assert_eq!(oldact, None); }
+    unsafe{ assert_eq!(OLDACT, None); }
     let act = SigAction::new(SigHandler::SigAction(sighandler),
                SaFlags::SA_RESTART.union(SaFlags::SA_SIGINFO), SigSet::empty());
-    unsafe { oldact = Some(sigaction(Signal::SIGSEGV, &act).unwrap()); }
+    unsafe { OLDACT = Some(sigaction(Signal::SIGSEGV, &act).unwrap()); }
 }
 
 #[ctor::dtor]
 fn finalize() {
     unsafe{
-        sigaction(Signal::SIGSEGV, &oldact.unwrap()).unwrap();
-        oldact = None;
+        sigaction(Signal::SIGSEGV, &OLDACT.unwrap()).unwrap();
+        OLDACT = None;
     }
 }
 
@@ -375,8 +371,8 @@ struct Header<Root: Default> {
 // If empty, then prepare and commit, otherwise rollback.
 fn prepare_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
         magick: u64, address: usize, size: usize) -> Result<()> {
-    let w = &holder.internal_write::<false>().guard.borrow();
-    let header_state = header_is_ok_and_empty(magick, address, size)?;
+    let w = &holder.internal_write::<false>().guard;
+    let header_state = header_is_ok_state(magick, address, size)?;
     let ptr = unsafe{(address as *mut Header<Root>).as_mut()}.unwrap();
     match header_state {
         HeaderState::Fine => {} ,
@@ -406,7 +402,7 @@ static VERSION: &[u8] = env!("CARGO_PKG_VERSION_MAJOR").as_bytes();
 //const VERSION: &'static [u8; 8] = format!("{:>8}",
 //    env!("CARGO_PKG_VERSION_MAJOR"));//.try_into::<>().unwrap();
 enum HeaderState { Empty, NeedsToGrow, Fine }
-fn header_is_ok_and_empty(magick: u64, address: usize,
+fn header_is_ok_state(magick: u64, address: usize,
                         size: usize) -> Result<HeaderState> {
     let ptr = unsafe{(address as *const HeaderOfHeader).as_ref()}.unwrap();
     if ptr.filetype == [0,0,0,0,0,0,0,0] && ptr.magick == 0 && ptr.address == 0
@@ -429,7 +425,7 @@ fn header_is_ok_and_empty(magick: u64, address: usize,
 
 ////////////////////////////////////////////////////////////////////////////////
 // Reader accessor to allow storage concurrent read access.
-struct Reader<'a, Root: Default> {
+pub struct Reader<'a, Root: Default> {
     guard: RwLockReadGuard<'a, Arena>,
     arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
@@ -445,37 +441,37 @@ impl<Root: Default> Drop for Reader<'_, Root> {
         let arena = self.arena.read().unwrap();
         let mut readers = arena.readers.lock().unwrap();
         if *readers == 1 { unflock(arena.fd); }
+        assert!(*readers > 0);
         *readers -= 1;
-        assert!(*readers >= 0);
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Writer accessor to allow storage exclusive write access.
-struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
-    guard: WG,
-    arena: Arc<RwLock<Arena>>,
+pub struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
+    guard: RwLockWriteGuard<'a, Arena>,
+    _arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
 }
 impl<Root: Default, const PAGES_WRITABLE: bool> ops::Deref
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe{(self.guard.borrow().mem as *const Header<Root>).as_ref()}
+        &unsafe{(self.guard.mem as *const Header<Root>).as_ref()}
             .unwrap().root
     }
 }
 impl<Root: Default, const PAGES_WRITABLE: bool> ops::DerefMut
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn deref_mut(&mut self) -> &mut Root {
-        &mut unsafe{(self.guard.borrow().mem as *mut Header<Root>).as_mut()}
+        &mut unsafe{(self.guard.mem as *mut Header<Root>).as_mut()}
             .unwrap().root
     }
 }
 impl<Root, const PAGES_WRITABLE: bool> Drop
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn drop(&mut self) {
-        let a = &self.guard.borrow();
+        let a = &self.guard;
         let fd = a.fd;
         rollback::<PAGES_WRITABLE>(fd, a.log_fd, a.mem, a.page_size);
         self.remseg();
@@ -483,7 +479,7 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
     }
 }
 
-type Writer<'a, Root> = InternalWriter<'a, Root, true>;
+pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Allocator applicable for standard containers to make them persistent.
@@ -491,15 +487,17 @@ pub struct Allocator;
 
 impl Allocator {
     fn segment(&self) -> (*const u8, usize) {
-        let a = (self as *const Allocator) as *const libc::c_void;
-        with_upper_bound_cursor(a, |c| {
+        let a = (self as *const Allocator) as *const c_void;
+        MEM_MAP.with(|m| {
+            let mb = m.borrow();
+            let c = mb.upper_bound(ops::Bound::Included(&a));
             match c.key_value() {
                 None => panic!("No arena found for address {:X}", a as usize),
-                Some((l, (size, _))) => {
+                Some((l, ta)) => {
                     assert!(*l < a); // Internal crate error
-                    let u = unsafe { l.byte_offset(*size as isize) };
+                    let u = unsafe { l.byte_offset(ta.size as isize) };
                     assert!(a <= u); // May be crate user's failure
-                    (*l as *const u8, *size as usize)
+                    (*l as *const u8, ta.size as usize)
                 }
             }
         })
