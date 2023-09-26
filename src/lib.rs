@@ -1,4 +1,50 @@
-// Transaction protected arena for memory mapped file storage allocator
+//! # TMFAlloc: Transactional Mapped File Allocator for Rust
+//!
+//! ## Storage initialization
+//! ```
+//! ```
+//!
+//! ## Commited data in storage becomes persistent
+//! ```
+//! ```
+//!
+//! ## Data changes can be rolled back
+//! ### Explicitly
+//! ```
+//! ```
+//!
+//! ### Implicitly
+//! ```
+//! ```
+//!
+//! ## Allocator make standard collections persistent
+//! ```
+//! ```
+//!
+//! ## Concurrent threads access
+//! ### Single file single mapping parallel read
+//! ```
+//! ```
+//!
+//! ### Single file multiple mappings parallel read
+//! ```
+//! ```
+//!
+//! ### Multiple files multiple mappings parallel read
+//! ```
+//! ```
+//!
+//! ### Multiple writers race condition detector
+//! ```
+//! ```
+//!
+//! ## Legal
+//! ### Author
+//!
+//! Vladimir Voznesenskiy <vvoznesensky@yandex.ru>
+//!
+//! ### License
+//! Apache License v2.0
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
     ptr_from_ref)]
@@ -30,7 +76,9 @@ macro_rules! panic_syserr {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Arena: internal structure to hold all the file and mapping stuff.
+/// Arena: internal structure to hold all the file and mapping stuff.
+/// Created by Holder instance and shared by all it's clones in all threads.
+#[derive(Debug)]
 struct Arena {
     fd: c_int,     // Main file, mapped onto mem.
     log_fd: c_int, // Log file, consists of pairs (u32 page #, page).
@@ -41,14 +89,19 @@ struct Arena {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Holder: RAII fixture to initialize the database files and mmapping.
-// Do not mess up with the Root type: this crate cannot figure out if the type
-// of root object has been changed someway.
+/// Holder: RAII fixture to initialize the storage files and mmapping
+///
+/// Shares file mapped memory allocation arena with all it's clones.
+///
+/// Do not mess up with the Root type: this crate cannot figure out if the type
+/// of root object has been changed someway.
+#[derive(Debug, Clone)]
 pub struct Holder<'a, Root: 'a + Default> {
     arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
 }
 
+/// Error: all possible errors of [Holder] and arena initialization
 pub enum Error {
     IoError(std::io::Error),
     WrongFileType,
@@ -58,10 +111,23 @@ pub enum Error {
     WrongSize,
 }
 
+/// [Holder::new] initialization result
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl<'a, Root: 'a + Default> Holder<'a, Root> {
-    pub fn new(file_pfx: &str, arena_address: usize,
+    /// Initialize arena and it's [Holder]
+    ///
+    /// `file_pfx` - main (`.odb`) and log (`.log`) files path prefix.
+    ///
+    /// `arena_address` - optional address of arena space beginning. Useful for
+    ///     initialization of rare multi-arenas multi-code combinations. Most
+    ///     users are sufficient to pass `None`.
+    ///
+    /// `arena_size` - size of arena address space. Can grow, but cannot shrink.
+    ///
+    /// `magick` - user-defined magick number to distinguish among different
+    ///     versions of stored structures (i.e. schema). Dangerous to mess.
+    pub fn new(file_pfx: &str, arena_address: Option<usize>,
                     arena_size: usize, magick: u64) -> Result<Self> {
         let ps = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
         assert!(ps > 0);
@@ -71,20 +137,23 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         let fd = unsafe {
             libc::open(fname.as_ptr() as *const i8, libc::O_CREAT)
         };
-        let rval: Option<Result<Self>> = None;
+        let mut rval: Option<Result<Self>> = None;
         if fd != -1 {
             let lname = std::format!("{}.log\0", file_pfx);
             let ld = unsafe {
                 libc::open(lname.as_ptr() as *const i8, libc::O_CREAT)
             };
             if ld != -1 {
-                let aa = arena_address as *mut c_void;
+                let aa = match arena_address {
+                    None => 0,
+                    Some(a) => a,
+                } as *mut c_void;
                 let addr = unsafe {
                     libc::mmap(aa, arena_size, libc::PROT_READ,
-                        libc::MAP_SHARED_VALIDATE|libc::MAP_FIXED_NOREPLACE,
-                        fd, 0)
+                        libc::MAP_SHARED_VALIDATE| if aa.is_null() {0} else
+                            {libc::MAP_FIXED_NOREPLACE}, fd, 0)
                 };
-                if addr == aa {
+                if addr != (-1isize) as *mut c_void {
                     let arena = Arena {
                         fd: fd,
                         log_fd: ld,
@@ -95,10 +164,10 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
                     };
                     let arena = Arc::new(RwLock::new(arena));
                     let s = Self { arena: arena, phantom: marker::PhantomData };
-                    let r = prepare_header(&s, magick, arena_address,
-                                                                    arena_size);
-                    if let Ok(()) = r {
-                        return Ok(s);
+                    let r = prep_header(&s, magick, addr as usize, arena_size);
+                    match r {
+                        Ok(()) => return Ok(s),
+                        Err(e) => rval = Some(Err(e)),
                     }
                 }
                 unsafe { libc::close(ld); }
@@ -110,6 +179,7 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
             None => Err(Error::IoError(std::io::Error::last_os_error()))
         }
     }
+    /// Shared-lock the storage and get [Reader] smart pointer to Root instance
     pub fn read(&self) -> Reader::<Root> {
         let guard = self.arena.read().unwrap();
         {
@@ -129,13 +199,23 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         flock_w(guard.fd);
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
             guard: guard,
-            _arena: Arc::clone(&self.arena),
+            //_arena: Arc::clone(&self.arena),
             phantom: marker::PhantomData,
         };
         rv.setseg();
         rv
     }
     pub fn write(&mut self) -> Writer<Root> { self.internal_write::<true>() }
+
+    /// Returns the numeric address of the arena space beginning
+    pub fn address(&self) -> usize {
+        self.arena.read().unwrap().mem as usize
+    }
+
+    /// Returns the size of the arena address space
+    pub fn size(&self) -> usize {
+        self.arena.read().unwrap().size as usize
+    }
 }
 
 impl Drop for Arena {
@@ -369,7 +449,7 @@ struct Header<Root: Default> {
 
 // Check if the memory map header is ok.
 // If empty, then prepare and commit, otherwise rollback.
-fn prepare_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
+fn prep_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
         magick: u64, address: usize, size: usize) -> Result<()> {
     let w = &holder.internal_write::<false>().guard;
     let header_state = header_is_ok_state(magick, address, size)?;
@@ -424,7 +504,11 @@ fn header_is_ok_state(magick: u64, address: usize,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Reader accessor to allow storage concurrent read access.
+/// Reader: a smart pointer allowing storage concurrent read access
+///
+/// Can be created by [Holder::read] method. Holds shared locks to the memory
+/// mapped file storage until dropped. Provides shared read access to Root
+/// persistent instance.
 pub struct Reader<'a, Root: Default> {
     guard: RwLockReadGuard<'a, Arena>,
     arena: Arc<RwLock<Arena>>,
@@ -448,9 +532,12 @@ impl<Root: Default> Drop for Reader<'_, Root> {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Writer accessor to allow storage exclusive write access.
+/// InternalWriter: a smart pointer allowing storage exclusive write access
+///
+/// Not indended for direct creation by a user. See [Writer].
 pub struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
     guard: RwLockWriteGuard<'a, Arena>,
-    _arena: Arc<RwLock<Arena>>,
+    //_arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
 }
 impl<Root: Default, const PAGES_WRITABLE: bool> ops::Deref
@@ -479,10 +566,18 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
     }
 }
 
+/// Writer: a smart pointer allowing storage exclusive write access
+///
+/// Can be created by [Holder::write] method. Holds exclusive locks to the
+/// memory mapped file storage until dropped. Provides exclusive write access to
+/// Root persistent instance.
 pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
 
 ////////////////////////////////////////////////////////////////////////////////
-// Allocator applicable for standard containers to make them persistent.
+/// Allocator applicable for standard containers to make them persistent
+///
+/// Create [Writer] by [Holder::write] in the same thread before allocation,
+/// deallocation and other persistent storage update.
 pub struct Allocator;
 
 impl Allocator {
