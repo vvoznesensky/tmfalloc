@@ -2,10 +2,29 @@
 //!
 //! ## Storage initialization
 //! ```
+//! ##[derive(Default)]
+//! struct S { /* some fields */ };
+//! let h = tmfalloc::Holder::<S>::new("test_data", None, tmfalloc::TI,
+//!                                                         0x1234567890abcdef);
 //! ```
 //!
 //! ## Commited data in storage becomes persistent
 //! ```
+//! ##[derive(Default)]
+//! struct S(u64);
+//! let mut h1 = tmfalloc::Holder::<S>::new("test_data", None, tmfalloc::TI,
+//!                                             0x1234567890abcdef).unwrap();
+//! let mut w = h1.write();
+//! w.0 = 31415926;
+//!
+//! w.commit();
+//! drop(w);
+//! drop(h1);
+//!
+//! let h2 = tmfalloc::Holder::<S>::new("test_data", None, tmfalloc::TI,
+//!                                             0x1234567890abcdef).unwrap();
+//! let r = h2.read();
+//! assert_eq!(r.0, 31415926);
 //! ```
 //!
 //! ## Data changes can be rolled back
@@ -89,6 +108,17 @@ struct Arena {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/// Auxilliary constants
+/// Ki, kibi
+pub const KI: usize = 1024;
+/// Mi, mebi
+pub const MI: usize = 1024 * KI;
+/// Gi, gibi
+pub const GI: usize = 1024 * MI;
+/// Ti, tebi
+pub const TI: usize = 1024 * GI;
+
+////////////////////////////////////////////////////////////////////////////////
 /// Holder: RAII fixture to initialize the storage files and mmapping
 ///
 /// Shares file mapped memory allocation arena with all it's clones.
@@ -102,6 +132,7 @@ pub struct Holder<'a, Root: 'a + Default> {
 }
 
 /// Error: all possible errors of [Holder] and arena initialization
+#[derive(Debug)]
 pub enum Error {
     IoError(std::io::Error),
     WrongFileType,
@@ -135,13 +166,15 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         assert!(page_size.is_power_of_two());
         let fname = std::format!("{}.odb\0", file_pfx);
         let fd = unsafe {
-            libc::open(fname.as_ptr() as *const i8, libc::O_CREAT)
+            libc::open(fname.as_ptr() as *const i8,
+                libc::O_CREAT|libc::O_RDWR)
         };
         let mut rval: Option<Result<Self>> = None;
         if fd != -1 {
             let lname = std::format!("{}.log\0", file_pfx);
             let ld = unsafe {
-                libc::open(lname.as_ptr() as *const i8, libc::O_CREAT)
+                libc::open(lname.as_ptr() as *const i8,
+                    libc::O_CREAT|libc::O_RDWR)
             };
             if ld != -1 {
                 let aa = match arena_address {
@@ -540,6 +573,17 @@ pub struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
     //_arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
 }
+impl<'a, Root, const PAGES_WRITABLE: bool>
+        InternalWriter<'a, Root, PAGES_WRITABLE> {
+    pub fn rollback(&self) {
+        let g = &self.guard;
+        rollback::<PAGES_WRITABLE>(g.fd, g.log_fd, g.mem, g.size);
+    }
+    pub fn commit(&self) {
+        let g = &self.guard;
+        commit(g.fd, g.log_fd, g.mem, g.size);
+    }
+}
 impl<Root: Default, const PAGES_WRITABLE: bool> ops::Deref
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     type Target = Root;
@@ -609,14 +653,14 @@ unsafe impl alloc::Allocator for Allocator {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+//#[cfg(test)]
+//mod tests {
+//    use super::*;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+    //#[test]
+//    fn it_works() {
+//        let result = add(2, 2);
+//        assert_eq!(result, 4);
+//    }
+//}
 

@@ -13,7 +13,8 @@ Transactional memory-mapped file allocator inspired by
    file.
  * Every concrete storage has user-defined Root generic structure instance to
    store all the domain-specific collections.
- * Storage file is `flock`-protected during access.
+ * Storage file is `flock`-protected, so simultaneous processes access is
+   possible.
 
 ## Caveats on current limitations
  * Implements the simpliest possible bump (stack) allocator to prove the concept
@@ -28,8 +29,8 @@ Transactional memory-mapped file allocator inspired by
     handler to increase write throughput and decrease latency.
 - Test multi-process concurrent read and exclusive write access.
 
-## Distributions license
-[Apache License v2.0](APACHE-LICENSE)
+## Distribution license
+[Apache License v2.0](tmfalloc/blob?file=APACHE-LICENSE)
 
 ## Author and feedback
 
