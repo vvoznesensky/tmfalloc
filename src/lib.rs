@@ -4,16 +4,16 @@
 //! ```
 //! ##[derive(Default)]
 //! struct S { /* some fields */ };
-//! let h = tmfalloc::Holder::<S>::new("test_data", None, tmfalloc::TI,
-//!                                                         0x1234567890abcdef);
+//! let h = tmfalloc::Holder::<S>::new("abcdef123456789", None, tmfalloc::TI,
+//!                                                        0xabcdef1234567890);
 //! ```
 //!
 //! ## Commited data in storage becomes persistent
 //! ```
 //! ##[derive(Default)]
 //! struct S(u64);
-//! let mut h1 = tmfalloc::Holder::<S>::new("test_data", None, tmfalloc::TI,
-//!                                             0x1234567890abcdef).unwrap();
+//! let mut h1 = tmfalloc::Holder::<S>::new("1234567890abcdef", None,
+//!                                 tmfalloc::TI, 0x1234567890abcdef).unwrap();
 //! let mut w = h1.write();
 //! w.0 = 31415926;
 //!
@@ -21,8 +21,8 @@
 //! drop(w);
 //! drop(h1);
 //!
-//! let h2 = tmfalloc::Holder::<S>::new("test_data", None, tmfalloc::TI,
-//!                                             0x1234567890abcdef).unwrap();
+//! let h2 = tmfalloc::Holder::<S>::new("1234567890abcdef", None,
+//!                                 tmfalloc::TI, 0x1234567890abcdef).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 31415926);
 //! ```
@@ -66,9 +66,10 @@
 //! Apache License v2.0
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
-    ptr_from_ref)]
+    ptr_from_ref, const_mut_refs)]
 
 use ctor;
+use const_str;
 use errno::{errno};
 use libc;
 use libc::{c_int, c_void};
@@ -167,14 +168,14 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         let fname = std::format!("{}.odb\0", file_pfx);
         let fd = unsafe {
             libc::open(fname.as_ptr() as *const i8,
-                libc::O_CREAT|libc::O_RDWR)
+                libc::O_CREAT|libc::O_RDWR, 0o666)
         };
         let mut rval: Option<Result<Self>> = None;
         if fd != -1 {
             let lname = std::format!("{}.log\0", file_pfx);
             let ld = unsafe {
                 libc::open(lname.as_ptr() as *const i8,
-                    libc::O_CREAT|libc::O_RDWR)
+                    libc::O_CREAT|libc::O_RDWR, 0o666)
             };
             if ld != -1 {
                 let aa = match arena_address {
@@ -278,7 +279,7 @@ fn rollback<const PAGES_WRITABLE: bool>(fd: c_int, lfd: c_int,
     while read_exactly(lfd, pgn_ptr, 4)
             == 4 {
         let offset = (page_no as usize) * page_size;
-        let addr = unsafe{mem.byte_offset(offset as isize)};
+        let addr = unsafe{mem.byte_add(offset)};
         if !PAGES_WRITABLE {
             panic_syserr!(libc::mprotect(addr, page_size, libc::PROT_WRITE));
         }
@@ -356,34 +357,33 @@ unsafe fn deallocate(_from_size: (*const u8, usize), _ptr: ptr::NonNull<u8>,
                      _layout: alloc::Layout) {}
 
 ////////////////////////////////////////////////////////////////////////////////
-// SEGV and it's handler memory map
+// SIGSEGV on write to read-only page and it's handler memory map
 impl<Root, const PAGES_WRITABLE: bool>
         InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn setseg(&self) {
         let g = &self.guard;
         let s = g.size;
         let b = g.mem as *const c_void;
-        let e = unsafe{b.byte_offset(s as isize)};
-        MEM_MAP.with(|m| {
-            let mb = m.borrow();
+        let e = unsafe{b.byte_add(s)};
+        MEM_MAP.with_borrow_mut(|mb| {
             let mut c = mb.upper_bound(ops::Bound::Included(&b));
             if let Some((l, ta)) = c.key_value() {
-                assert!(unsafe{l.byte_offset(ta.size as isize)} <= b);
+                assert!(unsafe{l.byte_add(ta.size)} <= b);
                 c.move_next();
                 if let Some((l, _)) = c.key_value() { assert!(*l >= e); }
             }
+            mb.insert(b, ThreadArena{ size: s, odb_fd: g.fd,
+                                    log_fd: g.log_fd, page_size: g.page_size});
         });
-        MEM_MAP.with(|m| { m.borrow_mut().insert(b, ThreadArena{
-            size: s, log_fd: g.log_fd, page_size: g.page_size}); });
     }
 
     fn remseg(&self) {
         let g = &self.guard;
         let b = g.mem as *const c_void;
-        MEM_MAP.with_borrow_mut(|m| {
-            let r = m.remove(&b).unwrap();
-            assert_eq!(r, ThreadArena{
-                    size: g.size, log_fd: g.log_fd, page_size: g.page_size});
+        MEM_MAP.with_borrow_mut(|mb| {
+            let r = mb.remove(&b).unwrap();
+            assert_eq!(r, ThreadArena{ size: g.size, odb_fd: g.fd,
+                                    log_fd: g.log_fd, page_size: g.page_size});
         });
     }
 }
@@ -394,7 +394,7 @@ fn save_old_page(mem: *const c_void, size: usize, log_fd: c_int,
     let begin = unsafe{ addr.byte_offset(offset - (page_size) as isize) };
     assert_eq!(begin.align_offset(page_size), 0);
     assert!(begin >= mem);
-    let pn = unsafe{begin.byte_offset_from(mem)} / (page_size as isize);
+    let pn = unsafe{ begin.byte_offset_from(mem) } / (page_size as isize);
     let page_no: u32 = u32::try_from(pn).unwrap();
     assert!(size / page_size > (page_no as usize));
     // XXX use writev
@@ -403,24 +403,44 @@ fn save_old_page(mem: *const c_void, size: usize, log_fd: c_int,
     panic_syserr!(libc::write(log_fd, begin, page_size));
     sync(log_fd);
     panic_syserr!(libc::mprotect(begin as *mut c_void, page_size,
-                                                            libc::PROT_WRITE));
+                                            libc::PROT_READ|libc::PROT_WRITE));
+}
+
+const EXTEND_BYTES: usize = 8;
+
+fn extend_file(mem: *const c_void, size: usize, odb_fd: c_int,
+                                        page_size: usize, addr: *const c_void) {
+    let past_addr = unsafe { addr.byte_add(EXTEND_BYTES) };
+    let offset = past_addr.align_offset(page_size);
+    let e = unsafe { past_addr.byte_add(offset) };
+    let offset = unsafe { e.byte_offset_from(mem) };
+    assert!(usize::try_from(offset).unwrap() <= size);
+    panic_syserr!(libc::ftruncate(odb_fd, offset as libc::off_t));
 }
 
 extern "C" fn sighandler(signum: c_int, info: *mut libc::siginfo_t,
                             ucontext: *mut c_void) {
-    assert_eq!(signum, libc::SIGSEGV);
     let addr = unsafe{info.as_ref().unwrap().si_addr()} as *const c_void;
-    MEM_MAP.with(|m| {
-        let mb = m.borrow();
+    if MEM_MAP.with_borrow(|mb| {
         let c = mb.upper_bound(ops::Bound::Included(&addr));
         if let Some((l, ta)) = c.key_value() {
-            if addr < unsafe{l.byte_offset(ta.size as isize)} {
-                save_old_page(*l, ta.size, ta.log_fd, ta.page_size, addr);
-                return;
-            }
-        }
-    });
-    let oa = unsafe { OLDACT.unwrap() };
+            if addr < unsafe{l.byte_add(ta.size)} {
+                if signum == libc::SIGSEGV {
+                    save_old_page(*l, ta.size, ta.log_fd, ta.page_size, addr);
+                } else {
+                    assert!(signum == libc::SIGBUS);
+                    extend_file(*l, ta.size, ta.odb_fd, ta.page_size, addr);
+                }
+                true
+            } else { false }
+        } else { false }
+    }) { return };
+    let oa = if signum == libc::SIGSEGV {
+            unsafe { OLDACTSEGV.unwrap() }
+        } else {
+            assert_eq!(signum, libc::SIGBUS);
+            unsafe { OLDACTBUS.unwrap() }
+        };
     if !oa.mask().contains(Signal::try_from(signum).unwrap()) {
         match oa.handler() {
             SigHandler::SigDfl => { 
@@ -436,6 +456,7 @@ extern "C" fn sighandler(signum: c_int, info: *mut libc::siginfo_t,
 #[derive(PartialEq, Debug)]
 struct ThreadArena {
     size: usize,
+    odb_fd: c_int,
     log_fd: c_int,
     page_size: usize,
 }
@@ -445,23 +466,34 @@ thread_local! {
 }
 
 // Sigaction stuff: signal handler, install/remove it on crate load/remove.
-static mut OLDACT: Option<SigAction> = None;
+static mut OLDACTSEGV: Option<SigAction> = None;
+static mut OLDACTBUS: Option<SigAction> = None;
 
 #[ctor::ctor]
-fn initialize() {
-    unsafe{ assert_eq!(OLDACT, None); }
+fn initialise_sigs() {
+    assert_eq!(unsafe{OLDACTSEGV}, None);
+    assert_eq!(unsafe{OLDACTBUS}, None);
     let act = SigAction::new(SigHandler::SigAction(sighandler),
                SaFlags::SA_RESTART.union(SaFlags::SA_SIGINFO), SigSet::empty());
-    unsafe { OLDACT = Some(sigaction(Signal::SIGSEGV, &act).unwrap()); }
+    unsafe { OLDACTBUS = Some(sigaction(Signal::SIGBUS, &act).unwrap()); }
+    unsafe { OLDACTSEGV = Some(sigaction(Signal::SIGSEGV, &act).unwrap()); }
+}
+
+fn finalise_sig(s: Signal, osa: &mut Option<SigAction>) {
+    unsafe{
+        sigaction(s, &osa.unwrap()).unwrap();
+        *osa = None;
+    }
 }
 
 #[ctor::dtor]
-fn finalize() {
-    unsafe{
-        sigaction(Signal::SIGSEGV, &OLDACT.unwrap()).unwrap();
-        OLDACT = None;
-    }
+fn finalise_sigs() {
+    finalise_sig(Signal::SIGSEGV, &mut unsafe{OLDACTSEGV});
+    finalise_sig(Signal::SIGBUS, &mut unsafe{OLDACTBUS});
 }
+
+////////////////////////////////////////////////////////////////////////////////
+//
 
 ////////////////////////////////////////////////////////////////////////////////
 // Header stored in file
@@ -471,7 +503,7 @@ struct HeaderOfHeader {
     version: [u8; 8],   // Crate major version
     magick: u64,        // Error prone fixture to check the user types version
     address: usize,     // Base address of mapping to check
-    size:    usize,     // Size of mapping to check
+    size: usize,        // Size of mapping to check
     current: usize,     // Next piece of the bump allocator
 }
 #[repr(C, align(8))]
@@ -496,8 +528,8 @@ fn prep_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
         HeaderState::Empty => {
             *ptr = Header::<Root> {
                 h: HeaderOfHeader {
-                    filetype: FILETYPE.try_into().unwrap(),
-                    version: VERSION.try_into().unwrap(),
+                    filetype: FILETYPE,
+                    version: VERSION,
                     magick: magick,
                     address: address,
                     size: size,
@@ -510,10 +542,11 @@ fn prep_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
     }
     Ok(())
 }
-const FILETYPE: &[u8] = b"TMFALLOC";
-static VERSION: &[u8] = env!("CARGO_PKG_VERSION_MAJOR").as_bytes();
-//const VERSION: &'static [u8; 8] = format!("{:>8}",
-//    env!("CARGO_PKG_VERSION_MAJOR"));//.try_into::<>().unwrap();
+const FILETYPE: [u8; 8] = const_str::to_byte_array!(b"TMFALLOC");
+const V: &str = env!("CARGO_PKG_VERSION_MAJOR");
+const V_PREF: &str = const_str::repeat!(" ", 8 - V.len());
+const V_STR: &str = const_str::concat!(V_PREF, V);
+const VERSION: [u8; 8] = const_str::to_byte_array!(V_STR);
 enum HeaderState { Empty, NeedsToGrow, Fine }
 fn header_is_ok_state(magick: u64, address: usize,
                         size: usize) -> Result<HeaderState> {
@@ -625,16 +658,16 @@ pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
 pub struct Allocator;
 
 impl Allocator {
+    // Find the applicable memory segment for the given allocator
     fn segment(&self) -> (*const u8, usize) {
         let a = (self as *const Allocator) as *const c_void;
-        MEM_MAP.with(|m| {
-            let mb = m.borrow();
+        MEM_MAP.with_borrow(|mb| {
             let c = mb.upper_bound(ops::Bound::Included(&a));
             match c.key_value() {
                 None => panic!("No arena found for address {:X}", a as usize),
                 Some((l, ta)) => {
                     assert!(*l < a); // Internal crate error
-                    let u = unsafe { l.byte_offset(ta.size as isize) };
+                    let u = unsafe { l.byte_add(ta.size) };
                     assert!(a <= u); // May be crate user's failure
                     (*l as *const u8, ta.size as usize)
                 }
@@ -653,14 +686,17 @@ unsafe impl alloc::Allocator for Allocator {
     }
 }
 
-//#[cfg(test)]
-//mod tests {
-//    use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    //#[test]
-//    fn it_works() {
-//        let result = add(2, 2);
-//        assert_eq!(result, 4);
-//    }
-//}
+    #[derive(Default)]
+    struct S(u64);
+
+    #[test]
+    fn it_works() {
+        let mut h1 = Holder::<S>::new("1234567890abcdef", None,
+                                    TI, 0x1234567890abcdef).unwrap();
+    }
+}
 
