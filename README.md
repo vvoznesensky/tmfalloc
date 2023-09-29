@@ -20,6 +20,7 @@ Transactional memory-mapped file allocator inspired by
  * Implements the simpliest possible bump (stack) allocator to prove the concept
    of Rust memory mapped file allocator, so is not very useful.
  * Only `libc` (Linux, etc.) platforms are supported at the moment.
+ * Storage `Holder` does not endure process `fork`.
  * `unsafe`-saturated, so highly experimental.
 
 ## To do list

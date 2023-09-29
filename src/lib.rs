@@ -1,11 +1,11 @@
 //! # TMFAlloc: Transactional Mapped File Allocator for Rust
 //!
-//! ## Storage initialization
+/*//! ## Storage initialization
 //! ```
 //! ##[derive(Default)]
 //! struct S { /* some fields */ };
 //! let h = tmfalloc::Holder::<S>::new("abcdef123456789", None, tmfalloc::TI,
-//!                                                        0xabcdef1234567890);
+//!                                               0xabcdef1234567890).unwrap();
 //! ```
 //!
 //! ## Commited data in storage becomes persistent
@@ -63,7 +63,7 @@
 //! Vladimir Voznesenskiy <vvoznesensky@yandex.ru>
 //!
 //! ### License
-//! Apache License v2.0
+//! Apache License v2.0*/
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
     ptr_from_ref, const_mut_refs)]
@@ -96,14 +96,68 @@ macro_rules! panic_syserr {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// FileHolder: RAII fixture to handle raw files
+#[derive(Debug)]
+struct FileHolder(c_int);
+macro_rules! libc_result {
+    ( $rval:expr ) => { {
+        let r = unsafe { $rval };
+        if r as isize == -1 { Err(std::io::Error::last_os_error()) }
+        else { Ok(r) }
+    } }
+}
+impl FileHolder{
+    fn new(prefix: &str, extension: &str) -> std::io::Result<Self> {
+        let fname = std::format!("{}.{}\0", prefix, extension);
+        let r = libc_result!(libc::open(fname.as_ptr() as *const i8,
+                                        libc::O_CREAT|libc::O_RDWR, 0o666))?;
+        Ok(Self(r))
+    }
+    fn read_header_of_header(&self) -> Option<HeaderOfHeader> {
+        let mut h = std::mem::MaybeUninit::<HeaderOfHeader>::uninit();
+        const S: usize = std::mem::size_of::<HeaderOfHeader>();
+        let read = panic_syserr!(libc::read(self.0,
+                                core::ptr::from_mut(&mut h) as *mut c_void, S));
+        if read == S as isize { Some(unsafe{h.assume_init()}) } else { None }
+    }
+}
+impl std::ops::Deref for FileHolder {
+    type Target = c_int;
+    fn deref(&self) -> &c_int { &self.0 }
+}
+impl Drop for FileHolder {
+    fn drop(&mut self) {
+        panic_syserr!(libc::close(self.0));
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// MapHolder: RAII fixture to handle file memory mapping
+#[derive(Debug)]
+struct MapHolder(*mut c_void, usize);
+impl MapHolder {
+    fn new(fd: c_int, aa: *mut c_void, size: usize) -> std::io::Result<Self> {
+        let mfn = if aa.is_null() {0} else {libc::MAP_FIXED_NOREPLACE};
+        //let f = libc::MAP_SHARED_VALIDATE | mfn;
+        let f = libc::MAP_SHARED | mfn;
+        let a = libc_result!(libc::mmap(aa, size, libc::PROT_READ, f, fd, 0))?;
+        Ok(Self(a, size))
+    }
+}
+impl Drop for MapHolder {
+    fn drop(&mut self) {
+        panic_syserr!(libc::munmap(self.0, self.1));
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 /// Arena: internal structure to hold all the file and mapping stuff.
 /// Created by Holder instance and shared by all it's clones in all threads.
 #[derive(Debug)]
 struct Arena {
-    fd: c_int,     // Main file, mapped onto mem.
-    log_fd: c_int, // Log file, consists of pairs (u32 page #, page).
-    mem: *mut c_void,
-    size: usize,
+    mem: MapHolder,
+    fd: FileHolder,     // Main file, mapped onto mem.
+    log_fd: FileHolder, // Log file, consists of pairs (u32 page #, page).
     readers: Mutex<u32>, // Number of readers to apply and revoke flock once.
     page_size: usize,
 }
@@ -138,9 +192,13 @@ pub enum Error {
     IoError(std::io::Error),
     WrongFileType,
     WrongMajorVersion,
+    WrongEndianBitness,
     WrongMagick,
     WrongAddress,
     WrongSize,
+}
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self { Self::IoError(value) }
 }
 
 /// [Holder::new] initialization result
@@ -165,60 +223,38 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         assert!(ps > 0);
         let page_size = ps as usize;
         assert!(page_size.is_power_of_two());
-        let fname = std::format!("{}.odb\0", file_pfx);
-        let fd = unsafe {
-            libc::open(fname.as_ptr() as *const i8,
-                libc::O_CREAT|libc::O_RDWR, 0o666)
-        };
-        let mut rval: Option<Result<Self>> = None;
-        if fd != -1 {
-            let lname = std::format!("{}.log\0", file_pfx);
-            let ld = unsafe {
-                libc::open(lname.as_ptr() as *const i8,
-                    libc::O_CREAT|libc::O_RDWR, 0o666)
-            };
-            if ld != -1 {
-                let aa = match arena_address {
-                    None => 0,
-                    Some(a) => a,
-                } as *mut c_void;
-                let addr = unsafe {
-                    libc::mmap(aa, arena_size, libc::PROT_READ,
-                        libc::MAP_SHARED_VALIDATE| if aa.is_null() {0} else
-                            {libc::MAP_FIXED_NOREPLACE}, fd, 0)
-                };
-                if addr != (-1isize) as *mut c_void {
-                    let arena = Arena {
-                        fd: fd,
-                        log_fd: ld,
-                        mem: addr,
-                        size: arena_size,
-                        readers: Mutex::new(0),
-                        page_size: page_size,
-                    };
-                    let arena = Arc::new(RwLock::new(arena));
-                    let s = Self { arena: arena, phantom: marker::PhantomData };
-                    let r = prep_header(&s, magick, addr as usize, arena_size);
-                    match r {
-                        Ok(()) => return Ok(s),
-                        Err(e) => rval = Some(Err(e)),
-                    }
-                }
-                unsafe { libc::close(ld); }
+        let fd = FileHolder::new(file_pfx, "odb")?;
+        flock_w(*fd);
+        let h = fd.read_header_of_header();
+        let ld = FileHolder::new(file_pfx, "log")?;
+        let aa = match arena_address {
+            None => match h { None => 0, Some(ha) => ha.address, },
+            Some(a) => match h {
+                None => a,
+                Some(ha) => if a == ha.address { a }
+                            else { return Err(Error::WrongAddress) }
             }
-            unsafe { libc::close(fd); }
-        }
-        match rval {
-            Some(r) => r,
-            None => Err(Error::IoError(std::io::Error::last_os_error()))
-        }
+        } as *mut c_void;
+        let addr = MapHolder::new(*fd, aa, arena_size)?;
+        let shown = addr.0 as usize;
+        let arena = Arena {
+            mem: addr,
+            fd: fd,
+            log_fd: ld,
+            readers: Mutex::new(0),
+            page_size: page_size,
+        };
+        let arena = Arc::new(RwLock::new(arena));
+        let s = Self { arena: arena, phantom: marker::PhantomData };
+        prep_header(&s, magick, shown, arena_size)?;
+        Ok(s)
     }
     /// Shared-lock the storage and get [Reader] smart pointer to Root instance
     pub fn read(&self) -> Reader::<Root> {
         let guard = self.arena.read().unwrap();
         {
             let mut readers = guard.readers.lock().unwrap();
-            if *readers == 0 { flock_r(guard.fd); }
+            if *readers == 0 { flock_r(*guard.fd); }
             *readers += 1;
         }
         Reader::<Root> {
@@ -230,7 +266,7 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
     fn internal_write<const PAGES_WRITABLE: bool>(&self) ->
             InternalWriter<Root, PAGES_WRITABLE> {
         let guard = self.arena.write().unwrap();
-        flock_w(guard.fd);
+        flock_w(*guard.fd);
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
             guard: guard,
             //_arena: Arc::clone(&self.arena),
@@ -243,23 +279,20 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
 
     /// Returns the numeric address of the arena space beginning
     pub fn address(&self) -> usize {
-        self.arena.read().unwrap().mem as usize
+        self.arena.read().unwrap().mem.0 as usize
     }
 
     /// Returns the size of the arena address space
     pub fn size(&self) -> usize {
-        self.arena.read().unwrap().size as usize
+        self.arena.read().unwrap().mem.1 as usize
     }
 }
 
 impl Drop for Arena {
     fn drop(&mut self) {
-        flock_w(self.fd);
-        rollback::<true>(self.fd, self.log_fd, self.mem, self.page_size);
-        unflock(self.fd);
-        panic_syserr!(libc::close(self.log_fd));
-        panic_syserr!(libc::munmap(self.mem, self.size));
-        panic_syserr!(libc::close(self.fd));
+        flock_w(*self.fd);
+        rollback::<true>(*self.fd, *self.log_fd, self.mem.0, self.page_size);
+        unflock(*self.fd);
     }
 }
 
@@ -362,8 +395,8 @@ impl<Root, const PAGES_WRITABLE: bool>
         InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn setseg(&self) {
         let g = &self.guard;
-        let s = g.size;
-        let b = g.mem as *const c_void;
+        let s = g.mem.1;
+        let b = g.mem.0 as *const c_void;
         let e = unsafe{b.byte_add(s)};
         MEM_MAP.with_borrow_mut(|mb| {
             let mut c = mb.upper_bound(ops::Bound::Included(&b));
@@ -372,18 +405,18 @@ impl<Root, const PAGES_WRITABLE: bool>
                 c.move_next();
                 if let Some((l, _)) = c.key_value() { assert!(*l >= e); }
             }
-            mb.insert(b, ThreadArena{ size: s, odb_fd: g.fd,
-                                    log_fd: g.log_fd, page_size: g.page_size});
+            mb.insert(b, ThreadArena{ size: s, odb_fd: *g.fd,
+                                    log_fd: *g.log_fd, page_size: g.page_size});
         });
     }
 
     fn remseg(&self) {
         let g = &self.guard;
-        let b = g.mem as *const c_void;
+        let b = g.mem.0 as *const c_void;
         MEM_MAP.with_borrow_mut(|mb| {
             let r = mb.remove(&b).unwrap();
-            assert_eq!(r, ThreadArena{ size: g.size, odb_fd: g.fd,
-                                    log_fd: g.log_fd, page_size: g.page_size});
+            assert_eq!(r, ThreadArena{ size: g.mem.1, odb_fd: *g.fd,
+                                    log_fd: *g.log_fd, page_size: g.page_size});
         });
     }
 }
@@ -493,14 +526,12 @@ fn finalise_sigs() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-//
-
-////////////////////////////////////////////////////////////////////////////////
 // Header stored in file
 #[repr(C, align(8))]
 struct HeaderOfHeader {
     filetype: [u8; 8],  // Letters to show the file type "TMFALLOC"
     version: [u8; 8],   // Crate major version
+    endian_bitness: u64,// Number of bits and on what end they start
     magick: u64,        // Error prone fixture to check the user types version
     address: usize,     // Base address of mapping to check
     size: usize,        // Size of mapping to check
@@ -523,13 +554,14 @@ fn prep_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
         HeaderState::Fine => {} ,
         HeaderState::NeedsToGrow => {
             ptr.h.size = size;
-            commit(w.fd, w.log_fd, w.mem, w.size);
+            commit(*w.fd, *w.log_fd, w.mem.0, w.mem.1);
         }
         HeaderState::Empty => {
             *ptr = Header::<Root> {
                 h: HeaderOfHeader {
                     filetype: FILETYPE,
                     version: VERSION,
+                    endian_bitness: ENDIAN_BITNESS,
                     magick: magick,
                     address: address,
                     size: size,
@@ -537,7 +569,7 @@ fn prep_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
                 },
                 root: Default::default()
             };
-            commit(w.fd, w.log_fd, w.mem, w.size);
+            commit(*w.fd, *w.log_fd, w.mem.0, w.mem.1);
         }
     }
     Ok(())
@@ -547,6 +579,7 @@ const V: &str = env!("CARGO_PKG_VERSION_MAJOR");
 const V_PREF: &str = const_str::repeat!(" ", 8 - V.len());
 const V_STR: &str = const_str::concat!(V_PREF, V);
 const VERSION: [u8; 8] = const_str::to_byte_array!(V_STR);
+const ENDIAN_BITNESS: u64 = std::mem::size_of::<usize>() as u64;
 enum HeaderState { Empty, NeedsToGrow, Fine }
 fn header_is_ok_state(magick: u64, address: usize,
                         size: usize) -> Result<HeaderState> {
@@ -558,6 +591,8 @@ fn header_is_ok_state(magick: u64, address: usize,
         Err(Error::WrongFileType)
     } else if ptr.version != VERSION {
         Err(Error::WrongMajorVersion)
+    } else if ptr.endian_bitness != ENDIAN_BITNESS {
+        Err(Error::WrongEndianBitness)
     } else if ptr.magick != magick {
         Err(Error::WrongMagick)
     } else if ptr.address != address {
@@ -583,14 +618,15 @@ pub struct Reader<'a, Root: Default> {
 impl<Root: Default> ops::Deref for Reader<'_, Root> {
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe{(self.guard.mem as *const Header<Root>).as_ref()}.unwrap().root
+        &unsafe{(self.guard.mem.0 as *const Header<Root>).as_ref()}
+                                                                .unwrap().root
     }
 }
 impl<Root: Default> Drop for Reader<'_, Root> {
     fn drop(&mut self) {
         let arena = self.arena.read().unwrap();
         let mut readers = arena.readers.lock().unwrap();
-        if *readers == 1 { unflock(arena.fd); }
+        if *readers == 1 { unflock(*arena.fd); }
         assert!(*readers > 0);
         *readers -= 1;
     }
@@ -610,25 +646,25 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
         InternalWriter<'a, Root, PAGES_WRITABLE> {
     pub fn rollback(&self) {
         let g = &self.guard;
-        rollback::<PAGES_WRITABLE>(g.fd, g.log_fd, g.mem, g.size);
+        rollback::<PAGES_WRITABLE>(*g.fd, *g.log_fd, g.mem.0, g.mem.1);
     }
     pub fn commit(&self) {
         let g = &self.guard;
-        commit(g.fd, g.log_fd, g.mem, g.size);
+        commit(*g.fd, *g.log_fd, g.mem.0, g.mem.1);
     }
 }
 impl<Root: Default, const PAGES_WRITABLE: bool> ops::Deref
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe{(self.guard.mem as *const Header<Root>).as_ref()}
+        &unsafe{(self.guard.mem.0 as *const Header<Root>).as_ref()}
             .unwrap().root
     }
 }
 impl<Root: Default, const PAGES_WRITABLE: bool> ops::DerefMut
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn deref_mut(&mut self) -> &mut Root {
-        &mut unsafe{(self.guard.mem as *mut Header<Root>).as_mut()}
+        &mut unsafe{(self.guard.mem.0 as *mut Header<Root>).as_mut()}
             .unwrap().root
     }
 }
@@ -636,10 +672,9 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn drop(&mut self) {
         let a = &self.guard;
-        let fd = a.fd;
-        rollback::<PAGES_WRITABLE>(fd, a.log_fd, a.mem, a.page_size);
+        rollback::<PAGES_WRITABLE>(*a.fd, *a.log_fd, a.mem.0, a.mem.1);
         self.remseg();
-        unflock(fd);
+        unflock(*a.fd);
     }
 }
 
@@ -695,8 +730,19 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut h1 = Holder::<S>::new("1234567890abcdef", None,
-                                    TI, 0x1234567890abcdef).unwrap();
+        let mut h1 = Holder::<S>::new("1234567890abcdef", Some(0x70ffefe00000),
+                                          TI, 0x1234567890abcdef).unwrap();
+        let mut w = h1.write();
+        w.0 = 31415926;
+
+        w.commit();
+        drop(w);
+        drop(h1);
+
+        let h2 = Holder::<S>::new("1234567890abcdef", None,
+                                          TI, 0x1234567890abcdef).unwrap();
+        let r = h2.read();
+        assert_eq!(r.0, 31415926);
     }
 }
 
