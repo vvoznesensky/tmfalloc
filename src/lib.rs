@@ -1,48 +1,149 @@
 //! # TMFAlloc: Transactional Mapped File Allocator for Rust
 //!
-/*//! ## Storage initialization
+//! ## Storage initialization
 //! ```
-//! ##[derive(Default)]
+//! # let _ = std::fs::remove_file("test1.odb");
+//! # let _ = std::fs::remove_file("test1.log");
 //! struct S { /* some fields */ };
-//! let h = tmfalloc::Holder::<S>::new("abcdef123456789", None, tmfalloc::TI,
-//!                                               0xabcdef1234567890).unwrap();
+//! let h = tmfalloc::Holder::<S>::new("test1", None, tmfalloc::TI,
+//!                        0xfedcab0987654321, |a| { S{ /* ... */ } }).unwrap();
+//! # let _ = std::fs::remove_file("test1.odb");
+//! # let _ = std::fs::remove_file("test1.log");
 //! ```
 //!
 //! ## Commited data in storage becomes persistent
 //! ```
-//! ##[derive(Default)]
-//! struct S(u64);
-//! let mut h1 = tmfalloc::Holder::<S>::new("1234567890abcdef", None,
-//!                                 tmfalloc::TI, 0x1234567890abcdef).unwrap();
+//! # let _ = std::fs::remove_file("test2.odb");
+//! # let _ = std::fs::remove_file("test2.log");
+//! struct S(u64); // Value is 0 by default.
+//! let mut h1 = tmfalloc::Holder::<S>::new("test2", Some(0x70ffefe00000),
+//!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! let mut w = h1.write();
 //! w.0 = 31415926;
 //!
 //! w.commit();
+//! assert_eq!(w.0, 31415926);
 //! drop(w);
 //! drop(h1);
 //!
-//! let h2 = tmfalloc::Holder::<S>::new("1234567890abcdef", None,
-//!                                 tmfalloc::TI, 0x1234567890abcdef).unwrap();
+//! let h2 = tmfalloc::Holder::<S>::new("test2", None, tmfalloc::TI,
+//!     0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 31415926);
+//! # let _ = std::fs::remove_file("test2.odb");
+//! # let _ = std::fs::remove_file("test2.log");
 //! ```
 //!
 //! ## Data changes can be rolled back
 //! ### Explicitly
 //! ```
+//! # let _ = std::fs::remove_file("test3.odb");
+//! # let _ = std::fs::remove_file("test3.log");
+//! # struct S(u64);
+//! # let mut h1 = tmfalloc::Holder::<S>::new("test3", Some(0x70ffefe00000),
+//!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! # let mut w = h1.write();
+//! // -*- Skip -*-
+//! w.0 = 31415926;
+//!
+//! w.rollback();
+//! assert_eq!(w.0, 2718281828);
+//! // -*- Skip -*-
+//! # drop(w);
+//! # drop(h1);
+//! # let h2 = tmfalloc::Holder::<S>::new("test3", None, tmfalloc::TI,
+//! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
+//! let r = h2.read();
+//! assert_eq!(r.0, 2718281828);
+//! # let _ = std::fs::remove_file("test3.odb");
+//! # let _ = std::fs::remove_file("test3.log");
 //! ```
 //!
 //! ### Implicitly
 //! ```
+//! # let _ = std::fs::remove_file("test4.odb");
+//! # let _ = std::fs::remove_file("test4.log");
+//! # struct S(u64);
+//! # let mut h1 = tmfalloc::Holder::<S>::new("test4", Some(0x70ffefe00000),
+//!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! # let mut w = h1.write();
+//! // -*- Skip -*-
+//! w.0 = 31415926;
+//!
+//! assert_eq!(w.0, 31415926);
+//! drop(w);
+//! drop(h1);
+//! // -*- Skip -*-
+//! # let h2 = tmfalloc::Holder::<S>::new("test4", None, tmfalloc::TI,
+//! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
+//! let r = h2.read();
+//! assert_eq!(r.0, 2718281828);
+//! # let _ = std::fs::remove_file("test4.odb");
+//! # let _ = std::fs::remove_file("test4.log");
 //! ```
 //!
-//! ## Allocator make standard collections persistent
+//! ## Allocator makes standard collections persistent
 //! ```
+//! # #![feature(allocator_api, btreemap_alloc)] //, ascii_char)]
+//! # let _ = std::fs::remove_file("test5.odb");
+//! # let _ = std::fs::remove_file("test5.log");
+//! type A = tmfalloc::Allocator;
+//! type V = std::vec::Vec<u8, A>;
+//! struct S {
+//!     v: V,
+//!     b: std::boxed::Box<usize, A>,
+//!     m: std::collections::BTreeMap<V, usize, A>,
+//!     s: std::collections::BTreeSet<usize, A>,
+//! }
+//! impl S { fn new(a: tmfalloc::Allocator) -> S {
+//!     S {
+//!         v: V::new_in(a.clone()),
+//!         b: std::boxed::Box::<usize, A>::new_in(0, a.clone()),
+//!         m: std::collections::BTreeMap::<V, usize, A>::new_in(a.clone()),
+//!         s: std::collections::BTreeSet::<usize, A>::new_in(a),
+//!     }
+//! } }
+//! let mut h1 = tmfalloc::Holder::<S>::new("test5", Some(0x70ffefe00000),
+//!                          tmfalloc::TI, 0xfedcba9876543210, S::new).unwrap();
+//! let mut w = h1.write();
+//! let a: A = w.allocator();
+//! w.v.extend_from_slice(b"Once upon a time...");
+//! print!("allocator address is {:X}\n", a.clone().address() as usize);
+//! w.b = Box::new_in(12345, a.clone());
+//! w.m.insert("Fyodor Dostoevsky".as_bytes().to_vec_in(a.clone()), 59);
+//! w.m.insert("Leo Tolstoy".as_bytes().to_vec_in(a.clone()), 82);
+//! w.m.insert("Anton Chekhov".as_bytes().to_vec_in(a.clone()), 44);
+//! w.m.insert("Vladimir Nabokov".as_bytes().to_vec_in(a), 78);
+//! for i in [13, 11, 7, 5, 3, 2, 1] { w.s.insert(i); } ;
+//! w.commit();
+//! drop(w);
+//! drop(h1);
+//!
+//! let h2 = tmfalloc::Holder::<S>::new("test5", None, tmfalloc::TI,
+//!          0xfedcba9876543210, |a| {panic!("Should never happen")} ).unwrap();
+//! let r = h2.read();
+//! assert_eq!(r.v, b"Once upon a time...");
+//! assert_eq!(*r.b, 12345);
+//! assert_eq!(std::str::from_utf8(r.m.first_key_value().unwrap().0),
+//!                                                     Ok("Anton Chekhov"));
+//! assert_eq!(std::str::from_utf8(r.m.last_key_value().unwrap().0),
+//!                                                     Ok("Vladimir Nabokov"));
+//! let mut i = r.s.iter();
+//! for j in [1usize, 2, 3, 5, 7, 11, 13] {
+//!     assert_eq!(Some(&j), i.next());
+//! }
+//! assert_eq!(None, i.next());
+//! # let _ = std::fs::remove_file("test5.odb");
+//! # let _ = std::fs::remove_file("test5.log");
 //! ```
 //!
 //! ## Concurrent threads access
 //! ### Single file single mapping parallel read
 //! ```
+//! # let _ = std::fs::remove_file("test6.odb");
+//! # let _ = std::fs::remove_file("test6.log");
+//! # let _ = std::fs::remove_file("test6.odb");
+//! # let _ = std::fs::remove_file("test6.log");
 //! ```
 //!
 //! ### Single file multiple mappings parallel read
@@ -63,10 +164,11 @@
 //! Vladimir Voznesenskiy <vvoznesensky@yandex.ru>
 //!
 //! ### License
-//! Apache License v2.0*/
+//! Apache License v2.0
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
     ptr_from_ref, const_mut_refs)]
+#![feature(btreemap_alloc)]
 
 use ctor;
 use const_str;
@@ -181,7 +283,7 @@ pub const TI: usize = 1024 * GI;
 /// Do not mess up with the Root type: this crate cannot figure out if the type
 /// of root object has been changed someway.
 #[derive(Debug, Clone)]
-pub struct Holder<'a, Root: 'a + Default> {
+pub struct Holder<'a, Root: 'a> {
     arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
 }
@@ -204,7 +306,7 @@ impl From<std::io::Error> for Error {
 /// [Holder::new] initialization result
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl<'a, Root: 'a + Default> Holder<'a, Root> {
+impl<'a, Root: 'a> Holder<'a, Root> {
     /// Initialize arena and it's [Holder]
     ///
     /// `file_pfx` - main (`.odb`) and log (`.log`) files path prefix.
@@ -217,8 +319,8 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
     ///
     /// `magick` - user-defined magick number to distinguish among different
     ///     versions of stored structures (i.e. schema). Dangerous to mess.
-    pub fn new(file_pfx: &str, arena_address: Option<usize>,
-                    arena_size: usize, magick: u64) -> Result<Self> {
+    pub fn new(file_pfx: &str, arena_address: Option<usize>, arena_size: usize,
+                magick: u64, new_root: fn(Allocator) -> Root) -> Result<Self> {
         let ps = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
         assert!(ps > 0);
         let page_size = ps as usize;
@@ -246,7 +348,7 @@ impl<'a, Root: 'a + Default> Holder<'a, Root> {
         };
         let arena = Arc::new(RwLock::new(arena));
         let s = Self { arena: arena, phantom: marker::PhantomData };
-        prep_header(&s, magick, shown, arena_size)?;
+        prep_header(&s, magick, shown, arena_size, new_root)?;
         Ok(s)
     }
     /// Shared-lock the storage and get [Reader] smart pointer to Root instance
@@ -376,13 +478,18 @@ fn allocate(from_size: (*const u8, usize), layout: alloc::Layout) ->
         std::result::Result<ptr::NonNull<[u8]>, alloc::AllocError> {
     let h = unsafe{(from_size.0 as *mut HeaderOfHeader).as_mut()}.unwrap();
     let na = unsafe{from_size.0.add(h.current)};
-    let s = na.align_offset(layout.align()) + layout.size();
-    h.current += s;
+    let alignment = std::cmp::max(layout.align(), 0x8);
+    let alignmenter = na.align_offset(alignment);
+    let ap = unsafe{ na.add(alignmenter) };
+    let s = layout.size();
+    h.current += alignmenter + s;
     if h.current > from_size.1 {
         return Err(alloc::AllocError)
     } else {
+        print!("Allocated {:X} of size {} and alignment {}\n", ap as usize, s,
+            alignment);
         return Ok(ptr::NonNull::slice_from_raw_parts(
-                                ptr::NonNull::new(na.cast_mut()).unwrap(), s))
+                                ptr::NonNull::new(ap.cast_mut()).unwrap(), s))
     }
 }
 
@@ -538,38 +645,37 @@ struct HeaderOfHeader {
     current: usize,     // Next piece of the bump allocator
 }
 #[repr(C, align(8))]
-struct Header<Root: Default> {
+struct Header<Root> {
     h: HeaderOfHeader,
-    root: Root,
+    root: std::mem::ManuallyDrop<Root>,
 }
 
 // Check if the memory map header is ok.
 // If empty, then prepare and commit, otherwise rollback.
-fn prep_header<'a, Root: Default>(holder: &Holder::<'a, Root>,
-        magick: u64, address: usize, size: usize) -> Result<()> {
-    let w = &holder.internal_write::<false>().guard;
-    let header_state = header_is_ok_state(magick, address, size)?;
-    let ptr = unsafe{(address as *mut Header<Root>).as_mut()}.unwrap();
+fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
+        size: usize, new_root: fn(Allocator) -> Root) -> Result<()> {
+    let w = &holder.internal_write::<false>();
+    let wg = &w.guard;
+    let header_state = header_is_ok_state(magick, addr, size)?;
+    let ptr = unsafe{(addr as *mut Header<Root>).as_mut()}.unwrap();
     match header_state {
         HeaderState::Fine => {} ,
         HeaderState::NeedsToGrow => {
             ptr.h.size = size;
-            commit(*w.fd, *w.log_fd, w.mem.0, w.mem.1);
+            commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
         }
         HeaderState::Empty => {
-            *ptr = Header::<Root> {
-                h: HeaderOfHeader {
-                    filetype: FILETYPE,
-                    version: VERSION,
-                    endian_bitness: ENDIAN_BITNESS,
-                    magick: magick,
-                    address: address,
-                    size: size,
-                    current: std::mem::size_of::<Header<Root>>(),
-                },
-                root: Default::default()
+            ptr.h = HeaderOfHeader {
+                filetype: FILETYPE,
+                version: VERSION,
+                endian_bitness: ENDIAN_BITNESS,
+                magick: magick,
+                address: addr,
+                size: size,
+                current: std::mem::size_of::<Header<Root>>(),
             };
-            commit(*w.fd, *w.log_fd, w.mem.0, w.mem.1);
+            ptr.root = std::mem::ManuallyDrop::new(new_root(w.allocator()));
+            commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
         }
     }
     Ok(())
@@ -610,19 +716,19 @@ fn header_is_ok_state(magick: u64, address: usize,
 /// Can be created by [Holder::read] method. Holds shared locks to the memory
 /// mapped file storage until dropped. Provides shared read access to Root
 /// persistent instance.
-pub struct Reader<'a, Root: Default> {
+pub struct Reader<'a, Root> {
     guard: RwLockReadGuard<'a, Arena>,
     arena: Arc<RwLock<Arena>>,
     phantom: marker::PhantomData<&'a Root>
 }
-impl<Root: Default> ops::Deref for Reader<'_, Root> {
+impl<Root> ops::Deref for Reader<'_, Root> {
     type Target = Root;
     fn deref(&self) -> &Root {
         &unsafe{(self.guard.mem.0 as *const Header<Root>).as_ref()}
                                                                 .unwrap().root
     }
 }
-impl<Root: Default> Drop for Reader<'_, Root> {
+impl<Root> Drop for Reader<'_, Root> {
     fn drop(&mut self) {
         let arena = self.arena.read().unwrap();
         let mut readers = arena.readers.lock().unwrap();
@@ -652,8 +758,12 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
         let g = &self.guard;
         commit(*g.fd, *g.log_fd, g.mem.0, g.mem.1);
     }
+    pub fn allocator(&self) -> Allocator {
+        print!("allocator address is {:X}\n", self.guard.mem.0 as usize);
+        Allocator { address: self.guard.mem.0 as usize }
+    }
 }
-impl<Root: Default, const PAGES_WRITABLE: bool> ops::Deref
+impl<Root, const PAGES_WRITABLE: bool> ops::Deref
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     type Target = Root;
     fn deref(&self) -> &Root {
@@ -661,7 +771,7 @@ impl<Root: Default, const PAGES_WRITABLE: bool> ops::Deref
             .unwrap().root
     }
 }
-impl<Root: Default, const PAGES_WRITABLE: bool> ops::DerefMut
+impl<Root, const PAGES_WRITABLE: bool> ops::DerefMut
         for InternalWriter<'_, Root, PAGES_WRITABLE> {
     fn deref_mut(&mut self) -> &mut Root {
         &mut unsafe{(self.guard.mem.0 as *mut Header<Root>).as_mut()}
@@ -690,23 +800,19 @@ pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
 ///
 /// Create [Writer] by [Holder::write] in the same thread before allocation,
 /// deallocation and other persistent storage update.
-pub struct Allocator;
+#[derive(Clone)]
+pub struct Allocator {
+    address: usize,
+}
 
 impl Allocator {
+    pub fn address(&self) -> usize { self.address }
     // Find the applicable memory segment for the given allocator
     fn segment(&self) -> (*const u8, usize) {
-        let a = (self as *const Allocator) as *const c_void;
+        let a = self.address as *const c_void;
         MEM_MAP.with_borrow(|mb| {
-            let c = mb.upper_bound(ops::Bound::Included(&a));
-            match c.key_value() {
-                None => panic!("No arena found for address {:X}", a as usize),
-                Some((l, ta)) => {
-                    assert!(*l < a); // Internal crate error
-                    let u = unsafe { l.byte_add(ta.size) };
-                    assert!(a <= u); // May be crate user's failure
-                    (*l as *const u8, ta.size as usize)
-                }
-            }
+            let ta = mb.get(&a).unwrap();
+            (a as *const u8, ta.size)
         })
     }
 }
@@ -723,26 +829,10 @@ unsafe impl alloc::Allocator for Allocator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    //use super::*;
 
-    #[derive(Default)]
-    struct S(u64);
-
-    #[test]
-    fn it_works() {
-        let mut h1 = Holder::<S>::new("1234567890abcdef", Some(0x70ffefe00000),
-                                          TI, 0x1234567890abcdef).unwrap();
-        let mut w = h1.write();
-        w.0 = 31415926;
-
-        w.commit();
-        drop(w);
-        drop(h1);
-
-        let h2 = Holder::<S>::new("1234567890abcdef", None,
-                                          TI, 0x1234567890abcdef).unwrap();
-        let r = h2.read();
-        assert_eq!(r.0, 31415926);
-    }
+    //#[test]
+    //fn it_works() {
+    //}
 }
 
