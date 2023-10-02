@@ -142,6 +142,7 @@
 //! ```
 //! # let _ = std::fs::remove_file("test6.odb");
 //! # let _ = std::fs::remove_file("test6.log");
+//! // 
 //! # let _ = std::fs::remove_file("test6.odb");
 //! # let _ = std::fs::remove_file("test6.log");
 //! ```
@@ -180,7 +181,11 @@ use nix::sys::signal::{
 use std::alloc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use intrusive_collections::intrusive_adapter;
+use intrusive_collections::{LinkedList, LinkedListLink,
+                                                RBTreeLink, RBTree, KeyAdapter};
 use std::marker;
+use std::mem::ManuallyDrop;
 use std::ops;
 use std::ptr;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Mutex, Arc};
@@ -642,12 +647,13 @@ struct HeaderOfHeader {
     magick: u64,        // Error prone fixture to check the user types version
     address: usize,     // Base address of mapping to check
     size: usize,        // Size of mapping to check
-    current: usize,     // Next piece of the bump allocator
+    list: ManuallyDrop<LinkedList<ListAdapter>>, // List of neigbour free blocks
+    tree: ManuallyDrop<RBTree<TreeAdapter>>,     // Order of free blocks
 }
 #[repr(C, align(8))]
 struct Header<Root> {
     h: HeaderOfHeader,
-    root: std::mem::ManuallyDrop<Root>,
+    root: ManuallyDrop<Root>,
 }
 
 // Check if the memory map header is ok.
@@ -662,6 +668,7 @@ fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
         HeaderState::Fine => {} ,
         HeaderState::NeedsToGrow => {
             ptr.h.size = size;
+            // XXX Increase the size of the last free block/create it!
             commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
         }
         HeaderState::Empty => {
@@ -674,7 +681,7 @@ fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
                 size: size,
                 current: std::mem::size_of::<Header<Root>>(),
             };
-            ptr.root = std::mem::ManuallyDrop::new(new_root(w.allocator()));
+            ptr.root = ManuallyDrop::new(new_root(w.allocator()));
             commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
         }
     }
@@ -794,6 +801,27 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
 /// memory mapped file storage until dropped. Provides exclusive write access to
 /// Root persistent instance.
 pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
+
+////////////////////////////////////////////////////////////////////////////////
+// Red-black tree + linked list allocator muscellaneous stuff
+
+// FreeBlock: a (header of) piece of empty space.
+// 48 bytes on 64-bit architectures may seem to be too large.
+struct FreeBlock {
+    neighbours: LinkedListLink,
+    ordered: RBTreeLink,
+    size: usize,
+}
+intrusive_adapter!(ListAdapter = Box<FreeBlock>:
+                                    FreeBlock { neighbours: LinkedListLink });
+intrusive_adapter!(TreeAdapter = Box<FreeBlock>:
+                                    FreeBlock { ordered: RBTreeLink });
+impl<'a> KeyAdapter<'a> for TreeAdapter {
+    type Key = (usize, *const FreeBlock);
+    fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
+        (x.size, x as *const FreeBlock)
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Allocator applicable for standard containers to make them persistent

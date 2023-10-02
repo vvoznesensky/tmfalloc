@@ -11,7 +11,7 @@ Transactional memory-mapped file allocator inspired by
  * Single writer/multiple reader in multi-threaded code.
  * Write transactions exploit memory page protection and copy-on-write log
    file.
- * Every concrete storage has user-defined Root generic structure instance to
+ * Every concrete storage has user-defined `Root` generic structure instance to
    store all the domain-specific collections.
  * Storage file is `flock`-protected, so simultaneous processes access is
    possible.
@@ -24,6 +24,9 @@ Transactional memory-mapped file allocator inspired by
  * `unsafe`-saturated, so highly experimental.
 
 ## To do list
+- Concurrent threads access tests to detect race conditions.
+- Test two adjastent pages border 8-byte word write.
+- `Allocator::shrink` and `grow` methods.
 - Non-bump allocator with much less wasteful memory management.
 - Window$ support.
 - Main file page `mlock`-ing instead of log file immediate `fsync` in signal
