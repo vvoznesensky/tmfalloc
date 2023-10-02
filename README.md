@@ -26,6 +26,8 @@ Transactional memory-mapped file allocator inspired by
 ## To do list
 - Concurrent threads access tests to detect race conditions.
 - Test two adjastent pages border 8-byte word write.
+- Test deallocation.
+- Enlarging the arena during file open.
 - `Allocator::shrink` and `grow` methods.
 - Non-bump allocator with much less wasteful memory management.
 - Window$ support.

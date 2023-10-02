@@ -168,12 +168,12 @@
 //! Apache License v2.0
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
-    ptr_from_ref, const_mut_refs)]
+    ptr_from_ref, const_mut_refs, alloc_layout_extra)]
 #![feature(btreemap_alloc)]
 
 use ctor;
 use const_str;
-use errno::{errno};
+use errno::errno;
 use libc;
 use libc::{c_int, c_void};
 use nix::sys::signal::{
@@ -182,11 +182,10 @@ use std::alloc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use intrusive_collections::intrusive_adapter;
-use intrusive_collections::{LinkedList, LinkedListLink,
-                                                RBTreeLink, RBTree, KeyAdapter};
+use intrusive_collections::{RBTreeLink, RBTree, KeyAdapter, UnsafeRef};
 use std::marker;
 use std::mem::ManuallyDrop;
-use std::ops;
+use std::ops::{Deref, Bound::Included};
 use std::ptr;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Mutex, Arc};
 
@@ -346,13 +345,13 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         let shown = addr.0 as usize;
         let arena = Arena {
             mem: addr,
-            fd: fd,
+            fd,
             log_fd: ld,
             readers: Mutex::new(0),
-            page_size: page_size,
+            page_size,
         };
         let arena = Arc::new(RwLock::new(arena));
-        let s = Self { arena: arena, phantom: marker::PhantomData };
+        let s = Self { arena, phantom: marker::PhantomData };
         prep_header(&s, magick, shown, arena_size, new_root)?;
         Ok(s)
     }
@@ -365,7 +364,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
             *readers += 1;
         }
         Reader::<Root> {
-            guard: guard,
+            guard,
             arena: Arc::clone(&self.arena),
             phantom: marker::PhantomData,
         }
@@ -375,7 +374,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         let guard = self.arena.write().unwrap();
         flock_w(*guard.fd);
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
-            guard: guard,
+            guard,
             //_arena: Arc::clone(&self.arena),
             phantom: marker::PhantomData,
         };
@@ -478,28 +477,34 @@ fn unflock(fd: c_int) {
     panic_syserr!(libc::flock(fd, libc::LOCK_UN));
 }
 
-// Currently the simpliest bump allocator.
+// The address and size-address orders (de)allocation.
 fn allocate(from_size: (*const u8, usize), layout: alloc::Layout) ->
         std::result::Result<ptr::NonNull<[u8]>, alloc::AllocError> {
+    let s = layout.size() + layout.padding_needed_for(ALLOCATION_QUANTUM);
     let h = unsafe{(from_size.0 as *mut HeaderOfHeader).as_mut()}.unwrap();
-    let na = unsafe{from_size.0.add(h.current)};
-    let alignment = std::cmp::max(layout.align(), 0x8);
-    let alignmenter = na.align_offset(alignment);
-    let ap = unsafe{ na.add(alignmenter) };
-    let s = layout.size();
-    h.current += alignmenter + s;
-    if h.current > from_size.1 {
-        return Err(alloc::AllocError)
-    } else {
-        print!("Allocated {:X} of size {} and alignment {}\n", ap as usize, s,
-            alignment);
-        return Ok(ptr::NonNull::slice_from_raw_parts(
-                                ptr::NonNull::new(ap.cast_mut()).unwrap(), s))
+    let c = h.by_size_address.lower_bound(Included(&(s, std::ptr::null)));
+    match c.get() {
+        None => Err(alloc::AllocError),
+        Some(p) => {
+            FreeBlock::finalize(h, p);
+            if p.size > s {
+                let n = p.byte_add(s) as *mut ManuallyDrop<FreeBlock>;
+                FreeBlock::initialize(h, n, p.size - s);
+            }
+            Ok(ptr::NonNull::slice_from_raw_parts(
+                                ptr::NonNull::new(p.cast_mut()).unwrap(), s))
+        }
     }
 }
 
-unsafe fn deallocate(_from_size: (*const u8, usize), _ptr: ptr::NonNull<u8>,
-                     _layout: alloc::Layout) {}
+unsafe fn deallocate(from_size: (*const u8, usize), ptr: ptr::NonNull<u8>,
+                     layout: alloc::Layout) {
+    let s = layout.size();
+    assert!(s % ALLOCATION_QUANTUM == 0);
+    let h = unsafe{(from_size.0 as *mut HeaderOfHeader).as_mut()}.unwrap();
+    let c = h.by_address.upper_bound(Included(&ptr));
+    XXX match c.
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // SIGSEGV on write to read-only page and it's handler memory map
@@ -511,7 +516,7 @@ impl<Root, const PAGES_WRITABLE: bool>
         let b = g.mem.0 as *const c_void;
         let e = unsafe{b.byte_add(s)};
         MEM_MAP.with_borrow_mut(|mb| {
-            let mut c = mb.upper_bound(ops::Bound::Included(&b));
+            let mut c = mb.upper_bound(Included(&b));
             if let Some((l, ta)) = c.key_value() {
                 assert!(unsafe{l.byte_add(ta.size)} <= b);
                 c.move_next();
@@ -567,7 +572,7 @@ extern "C" fn sighandler(signum: c_int, info: *mut libc::siginfo_t,
                             ucontext: *mut c_void) {
     let addr = unsafe{info.as_ref().unwrap().si_addr()} as *const c_void;
     if MEM_MAP.with_borrow(|mb| {
-        let c = mb.upper_bound(ops::Bound::Included(&addr));
+        let c = mb.upper_bound(Included(&addr));
         if let Some((l, ta)) = c.key_value() {
             if addr < unsafe{l.byte_add(ta.size)} {
                 if signum == libc::SIGSEGV {
@@ -647,8 +652,9 @@ struct HeaderOfHeader {
     magick: u64,        // Error prone fixture to check the user types version
     address: usize,     // Base address of mapping to check
     size: usize,        // Size of mapping to check
-    list: ManuallyDrop<LinkedList<ListAdapter>>, // List of neigbour free blocks
-    tree: ManuallyDrop<RBTree<TreeAdapter>>,     // Order of free blocks
+    // Ordered intrusive collections of FreeBlock-s.
+    by_address: ManuallyDrop<RBTree<ByAddressAdapter>>,
+    by_size_address: ManuallyDrop<RBTree<BySizeAddressAdapter>>,
 }
 #[repr(C, align(8))]
 struct Header<Root> {
@@ -663,7 +669,8 @@ fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
     let w = &holder.internal_write::<false>();
     let wg = &w.guard;
     let header_state = header_is_ok_state(magick, addr, size)?;
-    let ptr = unsafe{(addr as *mut Header<Root>).as_mut()}.unwrap();
+    let hp = addr as *mut Header<Root>;
+    let ptr = unsafe{hp.as_mut()}.unwrap();
     match header_state {
         HeaderState::Fine => {} ,
         HeaderState::NeedsToGrow => {
@@ -676,11 +683,18 @@ fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
                 filetype: FILETYPE,
                 version: VERSION,
                 endian_bitness: ENDIAN_BITNESS,
-                magick: magick,
+                magick,
                 address: addr,
-                size: size,
-                current: std::mem::size_of::<Header<Root>>(),
+                size,
+                by_address: ManuallyDrop::new(RBTree::new(
+                                                ByAddressAdapter::new())),
+                by_size_address: ManuallyDrop::new(RBTree::new(
+                                                BySizeAddressAdapter::new())),
             };
+            let fbraw = unsafe { hp.add(1) } as *mut FreeBlock;
+            FreeBlock::initialize(&mut ptr.h, fbraw,
+                unsafe { hp.byte_add(size).byte_offset_from(fbraw)
+                                                        .try_into().unwrap()});
             ptr.root = ManuallyDrop::new(new_root(w.allocator()));
             commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
         }
@@ -697,8 +711,7 @@ enum HeaderState { Empty, NeedsToGrow, Fine }
 fn header_is_ok_state(magick: u64, address: usize,
                         size: usize) -> Result<HeaderState> {
     let ptr = unsafe{(address as *const HeaderOfHeader).as_ref()}.unwrap();
-    if ptr.filetype == [0,0,0,0,0,0,0,0] && ptr.magick == 0 && ptr.address == 0
-            && ptr.current == 0 {
+    if ptr.filetype == [0; 8] && ptr.magick == 0 && ptr.address == 0 {
         Ok(HeaderState::Empty)
     } else if ptr.filetype != FILETYPE {
         Err(Error::WrongFileType)
@@ -803,20 +816,44 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
 pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
 
 ////////////////////////////////////////////////////////////////////////////////
-// Red-black tree + linked list allocator muscellaneous stuff
+// Red-black trees allocator muscellaneous stuff
 
 // FreeBlock: a (header of) piece of empty space.
-// 48 bytes on 64-bit architectures may seem to be too large.
 struct FreeBlock {
-    neighbours: LinkedListLink,
-    ordered: RBTreeLink,
+    by_size_address: RBTreeLink,
+    by_address: RBTreeLink,
     size: usize,
+    padding: usize,
 }
-intrusive_adapter!(ListAdapter = Box<FreeBlock>:
-                                    FreeBlock { neighbours: LinkedListLink });
-intrusive_adapter!(TreeAdapter = Box<FreeBlock>:
-                                    FreeBlock { ordered: RBTreeLink });
-impl<'a> KeyAdapter<'a> for TreeAdapter {
+// 64 bytes on 64-bit architectures may seem to be too large.
+const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
+impl FreeBlock {
+    fn initialize(h: &mut HeaderOfHeader, fbraw: *mut FreeBlock, size: usize) {
+        let fbptr = fbraw as *mut ManuallyDrop<FreeBlock>;
+        let fbref = unsafe { fbptr.as_mut()}.unwrap();
+        *fbref = ManuallyDrop::new(FreeBlock{
+            by_address: RBTreeLink::new(),
+            by_size_address: RBTreeLink::new(),
+            size,
+            padding: 0
+        });
+        h.by_address.insert(unsafe { UnsafeRef::from_raw(fbraw) } );
+        h.by_size_address.insert(unsafe { UnsafeRef::from_raw(fbraw) } );
+    }
+    fn finalize(h: &mut HeaderOfHeader, fbraw: *mut FreeBlock) {
+        unsafe { h.by_address.cursor_mut_from_ptr(fbraw) }.remove();
+        unsafe { h.by_size_address.cursor_mut_from_ptr(fbraw) }.remove();
+    }
+}
+intrusive_adapter!(ByAddressAdapter = UnsafeRef<FreeBlock>:
+                            FreeBlock { by_address: RBTreeLink });
+impl<'a> KeyAdapter<'a> for ByAddressAdapter {
+    type Key = *const FreeBlock;
+    fn get_key(&self, x: &'a FreeBlock) -> Self::Key { x as *const FreeBlock }
+}
+intrusive_adapter!(BySizeAddressAdapter = UnsafeRef<FreeBlock>:
+                            FreeBlock { by_size_address: RBTreeLink });
+impl<'a> KeyAdapter<'a> for BySizeAddressAdapter {
     type Key = (usize, *const FreeBlock);
     fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
         (x.size, x as *const FreeBlock)
