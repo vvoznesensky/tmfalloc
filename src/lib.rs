@@ -181,11 +181,12 @@ use nix::sys::signal::{
 use std::alloc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use intrusive_collections::Bound::Included as IntrusiveIncluded;
 use intrusive_collections::intrusive_adapter;
 use intrusive_collections::{RBTreeLink, RBTree, KeyAdapter, UnsafeRef};
 use std::marker;
 use std::mem::ManuallyDrop;
-use std::ops::{Deref, Bound::Included};
+use std::ops;
 use std::ptr;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Mutex, Arc};
 
@@ -227,7 +228,7 @@ impl FileHolder{
         if read == S as isize { Some(unsafe{h.assume_init()}) } else { None }
     }
 }
-impl std::ops::Deref for FileHolder {
+impl ops::Deref for FileHolder {
     type Target = c_int;
     fn deref(&self) -> &c_int { &self.0 }
 }
@@ -482,17 +483,20 @@ fn allocate(from_size: (*const u8, usize), layout: alloc::Layout) ->
         std::result::Result<ptr::NonNull<[u8]>, alloc::AllocError> {
     let s = layout.size() + layout.padding_needed_for(ALLOCATION_QUANTUM);
     let h = unsafe{(from_size.0 as *mut HeaderOfHeader).as_mut()}.unwrap();
-    let c = h.by_size_address.lower_bound(Included(&(s, std::ptr::null)));
+    let c = h.by_size_address.lower_bound(
+                    IntrusiveIncluded(&(s, std::ptr::null::<FreeBlock>())));
     match c.get() {
         None => Err(alloc::AllocError),
-        Some(p) => {
+        Some(r) => {
+            let p = r as *const FreeBlock;
+            let rs = r.size;
             FreeBlock::finalize(h, p);
-            if p.size > s {
-                let n = p.byte_add(s) as *mut ManuallyDrop<FreeBlock>;
-                FreeBlock::initialize(h, n, p.size - s);
+            if rs > s {
+                let n = unsafe{ p.byte_add(s) } as *mut FreeBlock;
+                FreeBlock::initialize(h, n, rs - s);
             }
             Ok(ptr::NonNull::slice_from_raw_parts(
-                                ptr::NonNull::new(p.cast_mut()).unwrap(), s))
+                                ptr::NonNull::new(p as *mut u8).unwrap(), s))
         }
     }
 }
@@ -502,8 +506,41 @@ unsafe fn deallocate(from_size: (*const u8, usize), ptr: ptr::NonNull<u8>,
     let s = layout.size();
     assert!(s % ALLOCATION_QUANTUM == 0);
     let h = unsafe{(from_size.0 as *mut HeaderOfHeader).as_mut()}.unwrap();
-    let c = h.by_address.upper_bound(Included(&ptr));
-    XXX match c.
+    let p = ptr.as_ptr() as *const FreeBlock;
+    // XXX These cursors are neighbours, so could be optimized?
+    let cl = h.by_address.lower_bound(IntrusiveIncluded(&p));
+    let cu = h.by_address.upper_bound(IntrusiveIncluded(&p));
+    let ln = match cl.get() { // lower neighbour
+        None => None,
+        Some(l) => if (l as *const FreeBlock).byte_add(l.size) < p { None }
+                    else { Some(l as *const FreeBlock) }
+    };
+    let un = match cu.get() { // upper neighbour
+        None => None,
+        Some(u) => if p.byte_add(s) < u as *const FreeBlock { None }
+                    else { Some((u as *const FreeBlock, u.size)) }
+    };
+    match ln {
+        None => match un {
+            None => FreeBlock::initialize(h, p, s),
+            Some((up, us)) => {
+                FreeBlock::finalize(h, up as *const FreeBlock);
+                FreeBlock::initialize(h, p, s + us);
+            }
+        },
+        Some(lp) => {
+            let lr = lp.cast_mut().as_mut().unwrap();
+            unsafe { h.by_size_address.cursor_mut_from_ptr(lp) }.remove();
+            match un {
+                None => lr.size += s,
+                Some((up, us)) => {
+                    FreeBlock::finalize(h, up);
+                    lr.size += s + us;
+                }
+            };
+            h.by_size_address.insert(unsafe { UnsafeRef::from_raw(lp) } );
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -516,7 +553,7 @@ impl<Root, const PAGES_WRITABLE: bool>
         let b = g.mem.0 as *const c_void;
         let e = unsafe{b.byte_add(s)};
         MEM_MAP.with_borrow_mut(|mb| {
-            let mut c = mb.upper_bound(Included(&b));
+            let mut c = mb.upper_bound(ops::Bound::Included(&b));
             if let Some((l, ta)) = c.key_value() {
                 assert!(unsafe{l.byte_add(ta.size)} <= b);
                 c.move_next();
@@ -572,7 +609,7 @@ extern "C" fn sighandler(signum: c_int, info: *mut libc::siginfo_t,
                             ucontext: *mut c_void) {
     let addr = unsafe{info.as_ref().unwrap().si_addr()} as *const c_void;
     if MEM_MAP.with_borrow(|mb| {
-        let c = mb.upper_bound(Included(&addr));
+        let c = mb.upper_bound(ops::Bound::Included(&addr));
         if let Some((l, ta)) = c.key_value() {
             if addr < unsafe{l.byte_add(ta.size)} {
                 if signum == libc::SIGSEGV {
@@ -823,26 +860,26 @@ struct FreeBlock {
     by_size_address: RBTreeLink,
     by_address: RBTreeLink,
     size: usize,
-    padding: usize,
+    _padding: usize,
 }
 // 64 bytes on 64-bit architectures may seem to be too large.
 const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
 impl FreeBlock {
-    fn initialize(h: &mut HeaderOfHeader, fbraw: *mut FreeBlock, size: usize) {
-        let fbptr = fbraw as *mut ManuallyDrop<FreeBlock>;
+    fn initialize(h: &mut HeaderOfHeader, fbr: *const FreeBlock, size: usize) {
+        let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
         let fbref = unsafe { fbptr.as_mut()}.unwrap();
         *fbref = ManuallyDrop::new(FreeBlock{
             by_address: RBTreeLink::new(),
             by_size_address: RBTreeLink::new(),
             size,
-            padding: 0
+            _padding: 0
         });
-        h.by_address.insert(unsafe { UnsafeRef::from_raw(fbraw) } );
-        h.by_size_address.insert(unsafe { UnsafeRef::from_raw(fbraw) } );
+        h.by_address.insert(unsafe { UnsafeRef::from_raw(fbr) } );
+        h.by_size_address.insert(unsafe { UnsafeRef::from_raw(fbr) } );
     }
-    fn finalize(h: &mut HeaderOfHeader, fbraw: *mut FreeBlock) {
-        unsafe { h.by_address.cursor_mut_from_ptr(fbraw) }.remove();
-        unsafe { h.by_size_address.cursor_mut_from_ptr(fbraw) }.remove();
+    fn finalize(h: &mut HeaderOfHeader, fbr: *const FreeBlock) {
+        unsafe { h.by_address.cursor_mut_from_ptr(fbr) }.remove();
+        unsafe { h.by_size_address.cursor_mut_from_ptr(fbr) }.remove();
     }
 }
 intrusive_adapter!(ByAddressAdapter = UnsafeRef<FreeBlock>:

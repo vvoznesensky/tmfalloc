@@ -15,19 +15,26 @@ Transactional memory-mapped file allocator inspired by
    store all the domain-specific collections.
  * Storage file is `flock`-protected, so simultaneous processes access is
    possible.
+ * Allocates the least but fittable free block with the least address among
+   all equally-sized blocks.
+ * Average allocation and deallocation cost is `O(log(number of free blocks))`
+   (plus possible file operations costs).
 
 ## Caveats on current limitations
- * Implements the simpliest possible bump (stack) allocator to prove the concept
-   of Rust memory mapped file allocator, so is not very useful.
- * Only `libc` (Linux, etc.) platforms are supported at the moment.
+ * Only Linux platforms are supported at the moment.
  * Storage `Holder` does not endure process `fork`.
  * `unsafe`-saturated, so highly experimental.
+ * Explicit memory mapping address selection on storage initialization is
+   recommended.
+ * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
+   architectures.
 
 ## To do list
 - Concurrent threads access tests to detect race conditions.
 - Test two adjastent pages border 8-byte word write.
 - Test deallocation.
 - Enlarging the arena during file open.
+- Cover the enlarging machinery with a test.
 - `Allocator::shrink` and `grow` methods.
 - Non-bump allocator with much less wasteful memory management.
 - Window$ support.
