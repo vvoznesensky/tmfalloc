@@ -41,7 +41,7 @@
 //! # let _ = std::fs::remove_file("test3.log");
 //! # struct S(u64);
 //! # let mut h1 = tmfalloc::Holder::<S>::new("test3", Some(0x70ffefe00000),
-//!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! #    tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! # let mut w = h1.write();
 //! // -*- Skip -*-
 //! w.0 = 31415926;
@@ -65,7 +65,7 @@
 //! # let _ = std::fs::remove_file("test4.log");
 //! # struct S(u64);
 //! # let mut h1 = tmfalloc::Holder::<S>::new("test4", Some(0x70ffefe00000),
-//!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! #    tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! # let mut w = h1.write();
 //! // -*- Skip -*-
 //! w.0 = 31415926;
@@ -84,7 +84,7 @@
 //!
 //! ## Allocator makes standard collections persistent
 //! ```
-//! # #![feature(allocator_api, btreemap_alloc)] //, ascii_char)]
+//! ##![feature(allocator_api, btreemap_alloc)]
 //! # let _ = std::fs::remove_file("test5.odb");
 //! # let _ = std::fs::remove_file("test5.log");
 //! type A = tmfalloc::Allocator;
@@ -108,7 +108,6 @@
 //! let mut w = h1.write();
 //! let a: A = w.allocator();
 //! w.v.extend_from_slice(b"Once upon a time...");
-//! print!("allocator address is {:X}\n", a.clone().address() as usize);
 //! w.b = Box::new_in(12345, a.clone());
 //! w.m.insert("Fyodor Dostoevsky".as_bytes().to_vec_in(a.clone()), 59);
 //! w.m.insert("Leo Tolstoy".as_bytes().to_vec_in(a.clone()), 82);
@@ -137,14 +136,63 @@
 //! # let _ = std::fs::remove_file("test5.log");
 //! ```
 //!
-//! ## Concurrent threads access
+//! ## Data could be deallocated to reuse the memory
+//! ```
+//! ##![feature(allocator_api)]
+//! # let _ = std::fs::remove_file("test6.odb");
+//! # let _ = std::fs::remove_file("test6.log");
+//! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
+//! let mut h = tmfalloc::Holder::<V>::new("test6", Some(0x70ffefe00000),
+//!         tmfalloc::TI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
+//! let mut w = h.write();
+//! w.extend_from_slice(b"Once upon a time...");
+//! let address1 = w.as_ptr() as usize;
+//! w.commit();
+//! drop(w);
+//!
+//! let mut w = h.write();
+//! w.clear();
+//! w.shrink_to_fit();
+//! w.extend_from_slice(b"Twice upon a time...");
+//! let address2 = w.as_ptr() as usize;
+//! w.commit();
+//! assert_eq!(address1, address2);
+//!
+//! # let _ = std::fs::remove_file("test6.odb");
+//! # let _ = std::fs::remove_file("test6.log");
+//! ```
+//!
+//! ## Storage can be expanded
+//! ```
+//! ##![feature(allocator_api)]
+//! # let _ = std::fs::remove_file("test7.odb");
+//! # let _ = std::fs::remove_file("test7.log");
+//! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
+//! let mut h = tmfalloc::Holder::<V>::new("test7", Some(0x70ffefe00000),
+//!           tmfalloc::MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
+//! let mut w = h.write();
+//! w.extend_from_slice(&[b'.'; tmfalloc::MI - 2 * tmfalloc::KI]);
+//! w.commit();
+//! drop(w);
+//! drop(h);
+//! let mut h = tmfalloc::Holder::<V>::new("test7", Some(0x70ffefe00000), 2 *
+//!             tmfalloc::MI, 0xfedcba9876543210, |a| { panic!("!")}).unwrap();
+//! let mut w = h.write();
+//! w.clear();
+//! w.shrink_to_fit();
+//! w.commit();
+//! # let _ = std::fs::remove_file("test7.odb");
+//! # let _ = std::fs::remove_file("test7.log");
+//! ```
+//!
+/*//! ## Concurrent threads access
 //! ### Single file single mapping parallel read
 //! ```
-//! # let _ = std::fs::remove_file("test6.odb");
-//! # let _ = std::fs::remove_file("test6.log");
+//! # let _ = std::fs::remove_file("test7.odb");
+//! # let _ = std::fs::remove_file("test7.log");
 //! // 
-//! # let _ = std::fs::remove_file("test6.odb");
-//! # let _ = std::fs::remove_file("test6.log");
+//! # let _ = std::fs::remove_file("test7.odb");
+//! # let _ = std::fs::remove_file("test7.log");
 //! ```
 //!
 //! ### Single file multiple mappings parallel read
@@ -157,7 +205,7 @@
 //!
 //! ### Multiple writers race condition detector
 //! ```
-//! ```
+//! ```*/
 //!
 //! ## Legal
 //! ### Author
@@ -270,7 +318,7 @@ struct Arena {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Auxilliary constants
+// Auxilliary constants
 /// Ki, kibi
 pub const KI: usize = 1024;
 /// Mi, mebi
@@ -317,8 +365,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     /// `file_pfx` - main (`.odb`) and log (`.log`) files path prefix.
     ///
     /// `arena_address` - optional address of arena space beginning. Useful for
-    ///     initialization of rare multi-arenas multi-code combinations. Most
-    ///     users are sufficient to pass `None`.
+    ///     avoiding memory clashes after program respawns.
     ///
     /// `arena_size` - size of arena address space. Can grow, but cannot shrink.
     ///
@@ -382,6 +429,8 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         rv.setseg();
         rv
     }
+    /// Exclusive-lock the storage and get [Writer] smart pointer to Root
+    /// instance
     pub fn write(&mut self) -> Writer<Root> { self.internal_write::<true>() }
 
     /// Returns the numeric address of the arena space beginning
@@ -437,7 +486,6 @@ fn rollback<const PAGES_WRITABLE: bool>(fd: c_int, lfd: c_int,
 fn commit(fd: c_int, lfd: c_int, mem: *mut c_void, size: libc::size_t) {
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
     panic_syserr!(libc::mprotect(mem, size, libc::PROT_READ));
-    panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
     sync(fd);
     truncate(lfd);
 }
@@ -495,6 +543,7 @@ fn allocate(from_size: (*const u8, usize), layout: alloc::Layout) ->
                 let n = unsafe{ p.byte_add(s) } as *mut FreeBlock;
                 FreeBlock::initialize(h, n, rs - s);
             }
+            print!("allocated address is {:X}, size {}\n", p as usize, s);
             Ok(ptr::NonNull::slice_from_raw_parts(
                                 ptr::NonNull::new(p as *mut u8).unwrap(), s))
         }
@@ -503,13 +552,14 @@ fn allocate(from_size: (*const u8, usize), layout: alloc::Layout) ->
 
 unsafe fn deallocate(from_size: (*const u8, usize), ptr: ptr::NonNull<u8>,
                      layout: alloc::Layout) {
-    let s = layout.size();
+    let s = layout.size() + layout.padding_needed_for(ALLOCATION_QUANTUM);
+    print!("deallocating address is {:X}, size {}\n", ptr.as_ptr() as usize, s);
     assert!(s % ALLOCATION_QUANTUM == 0);
     let h = unsafe{(from_size.0 as *mut HeaderOfHeader).as_mut()}.unwrap();
     let p = ptr.as_ptr() as *const FreeBlock;
-    // XXX These cursors are neighbours, so could be optimized?
-    let cl = h.by_address.lower_bound(IntrusiveIncluded(&p));
-    let cu = h.by_address.upper_bound(IntrusiveIncluded(&p));
+    // XXX These cursors point to neighbours, so could be optimized?
+    let cu = h.by_address.lower_bound(IntrusiveIncluded(&p));
+    let cl = h.by_address.upper_bound(IntrusiveIncluded(&p));
     let ln = match cl.get() { // lower neighbour
         None => None,
         Some(l) => if (l as *const FreeBlock).byte_add(l.size) < p { None }
@@ -530,7 +580,7 @@ unsafe fn deallocate(from_size: (*const u8, usize), ptr: ptr::NonNull<u8>,
         },
         Some(lp) => {
             let lr = lp.cast_mut().as_mut().unwrap();
-            unsafe { h.by_size_address.cursor_mut_from_ptr(lp) }.remove();
+            h.by_size_address.cursor_mut_from_ptr(lp).remove();
             match un {
                 None => lr.size += s,
                 Some((up, us)) => {
@@ -577,8 +627,8 @@ impl<Root, const PAGES_WRITABLE: bool>
 
 fn save_old_page(mem: *const c_void, size: usize, log_fd: c_int,
                                         page_size: usize, addr: *const c_void) {
-    let offset = addr.align_offset(page_size) as isize;
-    let begin = unsafe{ addr.byte_offset(offset - (page_size) as isize) };
+    let offs = unsafe{ addr.byte_add(1) }.align_offset(page_size) as isize + 1;
+    let begin = unsafe{ addr.byte_offset(offs - (page_size) as isize) };
     assert_eq!(begin.align_offset(page_size), 0);
     assert!(begin >= mem);
     let pn = unsafe{ begin.byte_offset_from(mem) } / (page_size as isize);
@@ -704,39 +754,73 @@ struct Header<Root> {
 fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
         size: usize, new_root: fn(Allocator) -> Root) -> Result<()> {
     let w = &holder.internal_write::<false>();
-    let wg = &w.guard;
     let header_state = header_is_ok_state(magick, addr, size)?;
-    let hp = addr as *mut Header<Root>;
-    let ptr = unsafe{hp.as_mut()}.unwrap();
     match header_state {
         HeaderState::Fine => {} ,
-        HeaderState::NeedsToGrow => {
-            ptr.h.size = size;
-            // XXX Increase the size of the last free block/create it!
-            commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
-        }
-        HeaderState::Empty => {
-            ptr.h = HeaderOfHeader {
-                filetype: FILETYPE,
-                version: VERSION,
-                endian_bitness: ENDIAN_BITNESS,
-                magick,
-                address: addr,
-                size,
-                by_address: ManuallyDrop::new(RBTree::new(
-                                                ByAddressAdapter::new())),
-                by_size_address: ManuallyDrop::new(RBTree::new(
-                                                BySizeAddressAdapter::new())),
-            };
-            let fbraw = unsafe { hp.add(1) } as *mut FreeBlock;
-            FreeBlock::initialize(&mut ptr.h, fbraw,
-                unsafe { hp.byte_add(size).byte_offset_from(fbraw)
-                                                        .try_into().unwrap()});
-            ptr.root = ManuallyDrop::new(new_root(w.allocator()));
-            commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
-        }
+        HeaderState::NeedsToGrow => grow_up_free_block::<Root>(addr, size, &w),
+        HeaderState::Empty => initialize_header::<Root>(
+                                            addr, size, magick, &w, new_root),
     }
     Ok(())
+}
+fn grow_up_free_block<Root>(addr: usize, size: usize,
+                                            w: &InternalWriter<Root, false>) {
+    let hp = addr as *mut Header<Root>;
+    let ptr = unsafe{hp.as_mut()}.unwrap();
+    let p = unsafe{hp.byte_add(ptr.h.size)} as *const FreeBlock;
+    let ph = &mut ptr.h;
+    let cl = ph.by_address.back_mut();
+    let old_size = ph.size;
+    match cl.get() { // lower neighbour
+        None => 
+            FreeBlock::initialize(ph,
+                        unsafe { hp.byte_add(old_size) }  as *const FreeBlock,
+                        size - old_size),
+        Some(l) => {
+            let lp = l as *const FreeBlock;
+            if unsafe{ lp.byte_add(l.size) } < p {
+                FreeBlock::initialize(ph,
+                        unsafe { hp.byte_add(old_size) }  as *const FreeBlock,
+                        size - old_size)
+            } else {
+                unsafe { ph.by_size_address.cursor_mut_from_ptr(lp) }.remove();
+                let lr = unsafe { lp.cast_mut().as_mut() }.unwrap();
+                lr.size += size - old_size;
+                ph.by_size_address.insert(unsafe { UnsafeRef::from_raw(lp) } );
+            }
+        }
+    };
+    ph.size = size;
+    let wg = &w.guard;
+    commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
+}
+fn initialize_header<Root>(addr: usize, size: usize, magick: u64,
+            w: &InternalWriter<Root, false>, new_root: fn(Allocator) -> Root) {
+    let hp = addr as *mut Header<Root>;
+    let ptr = unsafe{hp.as_mut()}.unwrap();
+    ptr.h = HeaderOfHeader {
+        filetype: FILETYPE,
+        version: VERSION,
+        endian_bitness: ENDIAN_BITNESS,
+        magick,
+        address: addr,
+        size,
+        by_address: ManuallyDrop::new(RBTree::new(
+                                        ByAddressAdapter::new())),
+        by_size_address: ManuallyDrop::new(RBTree::new(
+                                        BySizeAddressAdapter::new())),
+    };
+    let fbraw = unsafe { hp.add(1) };
+    let fbaddr = fbraw as usize;
+    let fbraw = unsafe { fbraw.byte_add(ALLOCATION_QUANTUM -
+                    (fbaddr % ALLOCATION_QUANTUM)) } as *mut FreeBlock;
+    print!("fbraw {:X}\n", fbraw as usize);
+    FreeBlock::initialize(&mut ptr.h, fbraw,
+        unsafe { hp.byte_add(size).byte_offset_from(fbraw)
+                                                .try_into().unwrap()});
+    ptr.root = ManuallyDrop::new(new_root(w.allocator()));
+    let wg = &w.guard;
+    commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
 }
 const FILETYPE: [u8; 8] = const_str::to_byte_array!(b"TMFALLOC");
 const V: &str = env!("CARGO_PKG_VERSION_MAJOR");
@@ -796,8 +880,8 @@ impl<Root> Drop for Reader<'_, Root> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Writer accessor to allow storage exclusive write access.
-/// InternalWriter: a smart pointer allowing storage exclusive write access
+// InternalWriter accessor to allow storage exclusive write access.
+/// A smart pointer allowing storage exclusive write access
 ///
 /// Not indended for direct creation by a user. See [Writer].
 pub struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
@@ -816,7 +900,6 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
         commit(*g.fd, *g.log_fd, g.mem.0, g.mem.1);
     }
     pub fn allocator(&self) -> Allocator {
-        print!("allocator address is {:X}\n", self.guard.mem.0 as usize);
         Allocator { address: self.guard.mem.0 as usize }
     }
 }
@@ -862,12 +945,16 @@ struct FreeBlock {
     size: usize,
     _padding: usize,
 }
-// 64 bytes on 64-bit architectures may seem to be too large.
-const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
+/// Common divisor of any allocation arena consumption in bytes.
+///
+/// 64 bytes on 64-bit architectures may seem to be too large.
+pub const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
 impl FreeBlock {
     fn initialize(h: &mut HeaderOfHeader, fbr: *const FreeBlock, size: usize) {
         let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
-        let fbref = unsafe { fbptr.as_mut()}.unwrap();
+        let fbref = unsafe { fbptr.as_mut() }.unwrap();
+        fbref._padding ^= -1isize as usize; // Cause SIGBUS if file too small.
+        print!("initializing address {:X} size {}\n", fbptr as usize, size);
         *fbref = ManuallyDrop::new(FreeBlock{
             by_address: RBTreeLink::new(),
             by_size_address: RBTreeLink::new(),

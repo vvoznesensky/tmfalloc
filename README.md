@@ -12,7 +12,7 @@ Transactional memory-mapped file allocator inspired by
  * Write transactions exploit memory page protection and copy-on-write log
    file.
  * Every concrete storage has user-defined `Root` generic structure instance to
-   store all the domain-specific collections.
+   store all the application-specific collections.
  * Storage file is `flock`-protected, so simultaneous processes access is
    possible.
  * Allocates the least but fittable free block with the least address among
@@ -31,12 +31,10 @@ Transactional memory-mapped file allocator inspired by
 
 ## To do list
 - Concurrent threads access tests to detect race conditions.
-- Test two adjastent pages border 8-byte word write.
-- Test deallocation.
-- Enlarging the arena during file open.
-- Cover the enlarging machinery with a test.
+- Test two adjastent pages border handling with 8-byte word write.
 - `Allocator::shrink` and `grow` methods.
-- Non-bump allocator with much less wasteful memory management.
+- 64 bytes allocation quantum may be too much. Two RBTrees may be too slow. Any
+  suggestions on how to improve this?
 - Window$ support.
 - Main file page `mlock`-ing instead of log file immediate `fsync` in signal
     handler to increase write throughput and decrease latency.
