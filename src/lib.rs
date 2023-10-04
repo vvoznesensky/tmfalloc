@@ -210,7 +210,8 @@
 //! ## Legal
 //! ### Author
 //!
-//! Vladimir Voznesenskiy <vvoznesensky@yandex.ru>
+//! Vladimir Voznesenskiy
+//! [\<vvoznesensky@yandex.ru\>](mailto:vvoznesensky@yandex.ru)
 //!
 //! ### License
 //! Apache License v2.0
