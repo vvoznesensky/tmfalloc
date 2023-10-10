@@ -4,9 +4,17 @@
 //! ```
 //! # let _ = std::fs::remove_file("test1.odb");
 //! # let _ = std::fs::remove_file("test1.log");
+//! ##[derive(Debug)]
 //! struct S { /* some fields */ };
 //! let h = tmfalloc::Holder::<S>::new("test1", None, tmfalloc::TI,
-//!                        0xfedcab0987654321, |a| { S{ /* ... */ } }).unwrap();
+//!         0xfedcab0987654321, |a| { S{ /* ... */ } }).unwrap();
+//! // Detects memory areas overlapping:
+//! match tmfalloc::Holder::<S>::new("test1", None, tmfalloc::TI,
+//!         0xfedcab0987654321, |a| { panic!("Impossible!") }).unwrap_err() {
+//!     tmfalloc::Error::IoError(e) =>
+//!         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists),
+//!     _ => panic!("Wrong type of error")
+//! }
 //! # let _ = std::fs::remove_file("test1.odb");
 //! # let _ = std::fs::remove_file("test1.log");
 //! ```
@@ -15,7 +23,7 @@
 //! ```
 //! # let _ = std::fs::remove_file("test2.odb");
 //! # let _ = std::fs::remove_file("test2.log");
-//! struct S(u64); // Value is 0 by default.
+//! struct S(u64);
 //! let mut h1 = tmfalloc::Holder::<S>::new("test2", Some(0x70ffefe00000),
 //!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! let mut w = h1.write();
@@ -146,7 +154,7 @@
 //!         tmfalloc::TI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(b"Once upon a time...");
-//! let address1 = w.as_ptr() as usize;
+//! let address1 = w.as_ptr();
 //! w.commit();
 //! drop(w);
 //!
@@ -154,7 +162,7 @@
 //! w.clear();
 //! w.shrink_to_fit();
 //! w.extend_from_slice(b"Twice upon a time...");
-//! let address2 = w.as_ptr() as usize;
+//! let address2 = w.as_ptr();
 //! w.commit();
 //! assert_eq!(address1, address2);
 //!
@@ -261,7 +269,7 @@ macro_rules! libc_result {
         else { Ok(r) }
     } }
 }
-impl FileHolder{
+impl FileHolder {
     fn new(prefix: &str, extension: &str) -> std::io::Result<Self> {
         let fname = std::format!("{}.{}\0", prefix, extension);
         let r = libc_result!(libc::open(fname.as_ptr() as *const i8,
@@ -409,7 +417,16 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         let guard = self.arena.read().unwrap();
         {
             let mut readers = guard.readers.lock().unwrap();
-            if *readers == 0 { flock_r(*guard.fd); }
+            if *readers == 0 {
+                flock_r(*guard.fd);
+                if not_empty(*guard.log_fd) {
+                    unflock(*guard.fd);
+                    flock_w(*guard.fd);
+                    rollback::<false>(*guard.fd, *guard.log_fd,
+                                                    guard.mem.0, guard.mem.1);
+                    flock_r(*guard.fd);
+                }
+            }
             *readers += 1;
         }
         Reader::<Root> {
@@ -422,9 +439,9 @@ impl<'a, Root: 'a> Holder<'a, Root> {
             InternalWriter<Root, PAGES_WRITABLE> {
         let guard = self.arena.write().unwrap();
         flock_w(*guard.fd);
+        rollback::<false>(*guard.fd, *guard.log_fd, guard.mem.0, guard.mem.1);
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
             guard,
-            //_arena: Arc::clone(&self.arena),
             phantom: marker::PhantomData,
         };
         rv.setseg();
@@ -445,13 +462,14 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     }
 }
 
+/* XXX Let it crash.
 impl Drop for Arena {
     fn drop(&mut self) {
         flock_w(*self.fd);
         rollback::<true>(*self.fd, *self.log_fd, self.mem.0, self.page_size);
         unflock(*self.fd);
     }
-}
+}*/
 
 ////////////////////////////////////////////////////////////////////////////////
 // Very internal functions that does not know about Arena structure, but
@@ -509,6 +527,12 @@ fn read_exactly(lfd: c_int, buf: *mut c_void, count: libc::size_t) -> usize {
 fn truncate(lfd: c_int) {
     panic_syserr!(libc::ftruncate(lfd, 0));
     panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
+}
+
+// Check if the log file is not empty.
+// Remember, the log file offset must be at the end of file.
+fn not_empty(lfd: c_int) -> bool {
+    panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_END)) > 0
 }
 
 // File sync
@@ -788,8 +812,8 @@ fn header_is_ok_state(magick: u64, address: usize,
 ////////////////////////////////////////////////////////////////////////////////
 /// Reader: a smart pointer allowing storage concurrent read access
 ///
-/// Can be created by [Holder::read] method. Holds shared locks to the memory
-/// mapped file storage until dropped. Provides shared read access to Root
+/// Can be created by [`Holder::read`] method. Holds shared locks to the memory
+/// mapped file storage until dropped. Provides shared read access to `Root`
 /// persistent instance.
 pub struct Reader<'a, Root> {
     guard: RwLockReadGuard<'a, Arena>,
@@ -891,7 +915,7 @@ impl FreeBlock {
     fn initialize(h: &mut HeaderOfHeader, fbr: *const FreeBlock, size: usize) {
         let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
         let fbref = unsafe { fbptr.as_mut() }.unwrap();
-        fbref._padding ^= -1isize as usize; // Cause SIGBUS if file too small.
+        fbref._padding = !fbref._padding; // Cause SIGBUS if file too small.
         print!("initializing address {:X} size {}\n", fbptr as usize, size);
         *fbref = ManuallyDrop::new(FreeBlock{
             by_address: RBTreeLink::new(),
@@ -923,11 +947,5 @@ impl<'a> KeyAdapter<'a> for BySizeAddressAdapter {
 }
 
 #[cfg(test)]
-mod tests {
-    //use super::*;
-
-    //#[test]
-    //fn it_works() {
-    //}
-}
+mod tests;
 

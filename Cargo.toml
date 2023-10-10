@@ -1,6 +1,6 @@
 [package]
 name = "tmfalloc"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Vladimir Voznesenskiy <vvoznesensky@yandex.ru>"]
 edition = "2021"
 rust-version = "1.74"
@@ -19,3 +19,5 @@ libc = "0.2"
 errno = "0.3"
 const-str = "0.5"
 intrusive-collections = "0.9"
+fork = "0.1"
+os_pipe = "1.1"

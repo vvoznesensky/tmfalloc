@@ -31,9 +31,16 @@ client or embedded application data cache/storage, etc.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
    architectures.
 
+## What's new in 0.1.1
+- `tests::page_boundary`: Test two adjastent pages border handling with 8-byte
+    word write.
+- `tests::read_recovery`: Fix and test broken transaction detection and rollback
+    after `flock` in `Holder::read()` and `Holder::write()` to allow parallel
+    writing process to crash.
+- Memory areas overlapping detection test example in the crate's documentation.
+
 ## To do list
 - Concurrent threads access tests to detect race conditions.
-- Test two adjastent pages border handling with 8-byte word write.
 - `Allocator::shrink` and `grow` methods.
 - 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
     may be too slow. Any suggestions on how to improve this?
@@ -50,5 +57,6 @@ client or embedded application data cache/storage, etc.
 Vladimir Voznesenskiy [\<vvoznesensky@yandex.ru\>](
     mailto:vvoznesensky@yandex.ru). Looking for interesting Rust job.
 
-Comments, suggestions, pull requests, praises and reasonable curses are welcome.
+Comments, suggestions, bug reports, pull requests, praises and reasonable curses
+are welcome.
 
