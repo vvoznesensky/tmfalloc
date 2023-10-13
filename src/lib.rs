@@ -225,8 +225,8 @@
 //! Apache License v2.0
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
-    ptr_from_ref, const_mut_refs, alloc_layout_extra)]
-#![feature(btreemap_alloc)]
+    ptr_from_ref, const_mut_refs, alloc_layout_extra, slice_ptr_get,
+    btreemap_alloc)]
 
 use ctor;
 use const_str;
@@ -772,7 +772,6 @@ fn initialize_header<Root>(addr: usize, size: usize, magick: u64,
     let fbaddr = fbraw as usize;
     let fbraw = unsafe { fbraw.byte_add(ALLOCATION_QUANTUM -
                     (fbaddr % ALLOCATION_QUANTUM)) } as *mut FreeBlock;
-    print!("fbraw {:X}\n", fbraw as usize);
     FreeBlock::initialize(&mut ptr.h, fbraw,
         unsafe { hp.byte_add(size).byte_offset_from(fbraw)
                                                 .try_into().unwrap()});
@@ -916,7 +915,6 @@ impl FreeBlock {
         let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
         let fbref = unsafe { fbptr.as_mut() }.unwrap();
         fbref._padding = !fbref._padding; // Cause SIGBUS if file too small.
-        print!("initializing address {:X} size {}\n", fbptr as usize, size);
         *fbref = ManuallyDrop::new(FreeBlock{
             by_address: RBTreeLink::new(),
             by_size_address: RBTreeLink::new(),

@@ -3,12 +3,13 @@ use fork;
 use os_pipe;
 use nix;
 use std::io::{Read, Write};
+use std::vec::Vec;
 
 #[test]
 fn page_boundary() {
     let _ = std::fs::remove_file("test_page_boundary.odb");
     let _ = std::fs::remove_file("test_page_boundary.log");
-    type V = std::vec::Vec<u64, Allocator>;
+    type V = Vec<u64, Allocator>;
     let mut h = Holder::<V>::new("test_page_boundary", Some(0x70ffefe00000),
             MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
     let mut w = h.write();
@@ -40,7 +41,7 @@ fn read_recovery() {
     match fork::fork() {
         Ok(fork::Fork::Parent(_)) => {
             let h = Holder::<u64>::new("test_read_recovery",
-                Some(0x70ffefd00000),
+                Some(0x70ffefc00000),
                 MI, 0xfedcba9876543210, |_| { 0 }).unwrap();
             writer_parent.write_all(b"1").unwrap();
             let mut b: [u8; 1] = [b'0'];
@@ -53,7 +54,7 @@ fn read_recovery() {
             assert_eq!(reader_child.read(&mut b).unwrap(), 1);
             assert_eq!(&b, b"1");
             let mut h = Holder::<u64>::new("test_read_recovery",
-                Some(0x70ffefd00000),
+                Some(0x70ffefc00000),
                 MI, 0xfedcba9876543210, |_| { panic!("Impossible!") }).unwrap();
             let mut w = h.write();
             *w = 1;
@@ -65,5 +66,50 @@ fn read_recovery() {
     }
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
+}
+
+#[test]
+fn grow_and_shrink() {
+    let _ = std::fs::remove_file("test_grow_and_shrink.odb");
+    let _ = std::fs::remove_file("test_grow_and_shrink.log");
+    type V = Vec<u8, Allocator>;
+    struct S {
+        onegin: V,
+        tworoads: V,
+        threelittlepigs: V,
+        fourseasons: V,
+    }
+    let mut h = Holder::<S>::new("test_grow_and_shrink", Some(0x70ffefa00000),
+            MI, 0xfedcba9876543210, |a| {
+                S {
+                    onegin: V::new_in(a.clone()),
+                    tworoads: V::new_in(a.clone()),
+                    threelittlepigs: V::new_in(a.clone()),
+                    fourseasons: V::new_in(a.clone()),
+                } }).unwrap();
+    let mut w = h.write();
+    w.onegin.extend_from_slice(b"My uncle has most honest principles:\n");
+    w.tworoads.extend_from_slice(b"TWO roads diverged in a yellow wood\n");
+    let a1 = w.onegin.as_ptr();
+    let a2 = w.tworoads.as_ptr();
+    let l2 = w.tworoads.len();
+    w.tworoads.extend_from_slice(b"And sorry I could not travel both\n");
+    assert_eq!(a2, w.tworoads.as_ptr());
+    w.onegin.extend_from_slice(b"when he was taken gravely ill,\n");
+    assert_ne!(a1, w.onegin.as_ptr());
+    w.commit();
+    w.tworoads.truncate(l2);
+    w.tworoads.shrink_to_fit();
+    w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n");
+    let a3 = w.threelittlepigs.as_ptr();
+    assert_eq!(a3, a1);
+    w.fourseasons.extend_from_slice(b"All four seasons are special somehow\n");
+    let a4 = w.fourseasons.as_ptr();
+    assert!(a2 < a4);
+    let a1m = w.onegin.as_ptr();
+    print!("a1 {a1:p} a2 {a2:p} a3 {a3:p} a4 {a4:p} a1m {a1m:p}\n");
+    assert!(a4 < w.onegin.as_ptr());
+    let _ = std::fs::remove_file("test_grow_and_shrink.odb");
+    let _ = std::fs::remove_file("test_grow_and_shrink.log");
 }
 

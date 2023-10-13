@@ -1,22 +1,23 @@
 # TMFAlloc: Transactional Mapped File Allocator for Rust
 
 Transactional memory-mapped file allocator inspired by
-[POST++](https://github.com/knizhnik/POST--). May be useful as fixed-schema
-client or embedded application data cache/storage, etc.
+[POST++](https://github.com/knizhnik/POST--). Allows to merge data
+representation and storage tiers into one tier. May be used as fixed-schema
+client storage, embedded application data cache, etc.
 
 ## Features
  * File-backed memory-mapped storage.
- * Implements `std::alloc::Allocator` trait, so usual `std::collections::\*`
-   (except `Hash\*`), `std::boxed::Box`, etc. containers could be stored in and
+ * Implements `std::alloc::Allocator` trait, so usual `std::collections::*`
+   (except `Hash*`), `std::boxed::Box`, etc. containers could be stored in and
    retreived from the file.
- * Single writer/multiple reader in multi-threaded code.
+ * Single writer/multiple readers in multi-threaded code.
  * Write transactions exploit memory page protection and copy-on-write log
    file.
- * Every concrete storage has user-defined `Root` generic structure instance to
-   store all the application-specific collections.
+ * Storage has user-defined `Root` type generic parameter to
+   store all the application-specific parameters, collections, etc.
  * Storage file is `flock`-protected, so simultaneous processes access is
    possible.
- * Allocates the least but fittable free block with the least address among
+ * Allocates the least but fittable free block with the lowest address among
    all equally-sized blocks.
  * Average allocation and deallocation cost is `O(log(number of free blocks))`
    (plus possible file operations costs).
@@ -26,7 +27,7 @@ client or embedded application data cache/storage, etc.
  * Only Linux platforms are supported at the moment.
  * Storage `Holder` does not endure process `fork`.
  * `unsafe`-saturated, so highly experimental.
- * Explicit memory mapping address selection on storage initialization is
+ * Explicit memory mapping address specification on storage initialization is
    recommended.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
    architectures.
