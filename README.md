@@ -14,7 +14,7 @@ client storage, embedded application data cache, etc.
  * Write transactions exploit memory page protection and copy-on-write log
    file.
  * Storage has user-defined `Root` type generic parameter to
-   store all the application-specific parameters, collections, etc.
+   store all application-specific parameters, collections, etc.
  * Storage file is `flock`-protected, so simultaneous processes access is
    possible.
  * Allocates the least but fittable free block with the lowest address among
@@ -32,26 +32,25 @@ client storage, embedded application data cache, etc.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
    architectures.
 
-## What's new in 0.1.1
-- `tests::page_boundary`: Test two adjastent pages border handling with 8-byte
-    word write.
-- `tests::read_recovery`: Fix and test broken transaction detection and rollback
-    after `flock` in `Holder::read()` and `Holder::write()` to allow parallel
-    writing process to crash.
-- Memory areas overlapping detection test example in the crate's documentation.
+## What's new in 0.1.2
+- Custom `Allocator::shrink` and `grow` methods added to eliminate unnessesary
+  data copies.
+- Some new tests.
+- MIT license option in addition to Apache v2.0 option.
 
 ## To do list
 - Concurrent threads access tests to detect race conditions.
-- `Allocator::shrink` and `grow` methods.
 - 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
     may be too slow. Any suggestions on how to improve this?
 - Window$ support.
 - Main file page `mlock`-ing instead of log file immediate `fsync` in signal
     handler to increase write throughput and decrease latency.
 - Test multi-process concurrent read and exclusive write access.
+- 100% code lines test coverage. How to collect coverage of docs tests?
 
-## Distribution license
-[Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE)
+## License
+[Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or
+[MIT License](tmfalloc/blob?file=LICENSE-MIT)
 
 ## Author and feedback
 

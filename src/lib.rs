@@ -32,6 +32,8 @@
 //! w.commit();
 //! assert_eq!(w.0, 31415926);
 //! drop(w);
+//! assert_eq!(h1.address(), 0x70ffefe00000);
+//! assert_eq!(h1.size(), tmfalloc::TI);
 //! drop(h1);
 //!
 //! let h2 = tmfalloc::Holder::<S>::new("test2", None, tmfalloc::TI,
@@ -214,15 +216,6 @@
 //! ### Multiple writers race condition detector
 //! ```
 //! ```*/
-//!
-//! ## Legal
-//! ### Author
-//!
-//! Vladimir Voznesenskiy
-//! [\<vvoznesensky@yandex.ru\>](mailto:vvoznesensky@yandex.ru)
-//!
-//! ### License
-//! Apache License v2.0
 
 #![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
     ptr_from_ref, const_mut_refs, alloc_layout_extra, slice_ptr_get,
@@ -462,7 +455,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     }
 }
 
-/* XXX Let it crash.
+/* XXX Let it crash?!
 impl Drop for Arena {
     fn drop(&mut self) {
         flock_w(*self.fd);

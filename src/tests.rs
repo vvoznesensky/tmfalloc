@@ -4,6 +4,7 @@ use os_pipe;
 use nix;
 use std::io::{Read, Write};
 use std::vec::Vec;
+use indoc;
 
 #[test]
 fn page_boundary() {
@@ -89,8 +90,9 @@ fn grow_and_shrink() {
                 } }).unwrap();
     let mut w = h.write();
     w.onegin.extend_from_slice(b"My uncle has most honest principles:\n");
-    w.tworoads.extend_from_slice(b"TWO roads diverged in a yellow wood\n");
     let a1 = w.onegin.as_ptr();
+    let l1 = w.onegin.len();
+    w.tworoads.extend_from_slice(b"TWO roads diverged in a yellow wood\n");
     let a2 = w.tworoads.as_ptr();
     let l2 = w.tworoads.len();
     w.tworoads.extend_from_slice(b"And sorry I could not travel both\n");
@@ -103,12 +105,23 @@ fn grow_and_shrink() {
     w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n");
     let a3 = w.threelittlepigs.as_ptr();
     assert_eq!(a3, a1);
+    w.onegin.truncate(l1);
+    w.onegin.shrink_to_fit();
     w.fourseasons.extend_from_slice(b"All four seasons are special somehow\n");
     let a4 = w.fourseasons.as_ptr();
     assert!(a2 < a4);
+    assert_eq!(unsafe { a2.byte_add(64) }, a4);
     let a1m = w.onegin.as_ptr();
-    print!("a1 {a1:p} a2 {a2:p} a3 {a3:p} a4 {a4:p} a1m {a1m:p}\n");
-    assert!(a4 < w.onegin.as_ptr());
+    assert!(a4 < a1m);
+    assert_eq!(unsafe { a4.byte_add(64) }, a1m);
+    w.threelittlepigs.extend_from_slice(indoc::indoc!(b"
+        And I, I may tell you, a tale
+        A tale of three, little pigs
+        And a big, bad, wolfff
+        "));
+    let a3m = w.threelittlepigs.as_ptr();
+    assert_eq!(unsafe { a1m.byte_add(64) }, a3m);
+    //print!("a1 {a1:p} a2 {a2:p} a3 {a3:p} a4 {a4:p} a1m {a1m:p}\n");
     let _ = std::fs::remove_file("test_grow_and_shrink.odb");
     let _ = std::fs::remove_file("test_grow_and_shrink.log");
 }
