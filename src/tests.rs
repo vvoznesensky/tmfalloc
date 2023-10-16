@@ -95,7 +95,9 @@ fn grow_and_shrink() {
     w.tworoads.extend_from_slice(b"TWO roads diverged in a yellow wood\n");
     let a2 = w.tworoads.as_ptr();
     let l2 = w.tworoads.len();
-    w.tworoads.extend_from_slice(b"And sorry I could not travel both\n");
+    w.tworoads.extend_from_slice(b"And sorry I could not travel");
+    assert_eq!(a2, w.tworoads.as_ptr());
+    w.tworoads.extend_from_slice(b" both\n");
     assert_eq!(a2, w.tworoads.as_ptr());
     w.onegin.extend_from_slice(b"when he was taken gravely ill,\n");
     assert_ne!(a1, w.onegin.as_ptr());
@@ -121,7 +123,6 @@ fn grow_and_shrink() {
         "));
     let a3m = w.threelittlepigs.as_ptr();
     assert_eq!(unsafe { a1m.byte_add(64) }, a3m);
-    //print!("a1 {a1:p} a2 {a2:p} a3 {a3:p} a4 {a4:p} a1m {a1m:p}\n");
     let _ = std::fs::remove_file("test_grow_and_shrink.odb");
     let _ = std::fs::remove_file("test_grow_and_shrink.log");
 }

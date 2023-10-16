@@ -3,7 +3,7 @@
 Transactional memory-mapped file allocator inspired by
 [POST++](https://github.com/knizhnik/POST--). Allows to merge data
 representation and storage tiers into one tier. May be used as fixed-schema
-client storage, embedded application data cache, etc.
+client cache, embedded application data storage, etc.
 
 ## Features
  * File-backed memory-mapped storage.
@@ -33,7 +33,7 @@ client storage, embedded application data cache, etc.
    architectures.
 
 ## What's new in 0.1.2
-- Custom `Allocator::shrink` and `grow` methods added to eliminate unnessesary
+- Custom `Allocator::shrink` and `grow` methods added to eliminate unnecessary
   data copies.
 - Some new tests.
 - MIT license option in addition to Apache v2.0 option.

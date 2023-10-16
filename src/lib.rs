@@ -53,12 +53,12 @@
 //! # let mut h1 = tmfalloc::Holder::<S>::new("test3", Some(0x70ffefe00000),
 //! #    tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! # let mut w = h1.write();
-//! // -*- Skip -*-
+//! // --snip--
 //! w.0 = 31415926;
 //!
 //! w.rollback();
 //! assert_eq!(w.0, 2718281828);
-//! // -*- Skip -*-
+//! // --snip--
 //! # drop(w);
 //! # drop(h1);
 //! # let h2 = tmfalloc::Holder::<S>::new("test3", None, tmfalloc::TI,
@@ -77,13 +77,13 @@
 //! # let mut h1 = tmfalloc::Holder::<S>::new("test4", Some(0x70ffefe00000),
 //! #    tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! # let mut w = h1.write();
-//! // -*- Skip -*-
+//! // --snip--
 //! w.0 = 31415926;
 //!
 //! assert_eq!(w.0, 31415926);
 //! drop(w);
 //! drop(h1);
-//! // -*- Skip -*-
+//! // --snip--
 //! # let h2 = tmfalloc::Holder::<S>::new("test4", None, tmfalloc::TI,
 //! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
