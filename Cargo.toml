@@ -23,5 +23,3 @@ fork = "0.1"
 os_pipe = "1.1"
 indoc = "2.0"
 
-[build]
-target = ["x86_64-unknown-linux-gnu", "i686-unknown-linux-gnu"]
