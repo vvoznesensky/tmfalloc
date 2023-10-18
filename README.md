@@ -32,17 +32,13 @@ client cache, embedded application data storage, etc.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
    architectures.
 
-## What's new in 0.1.2
-- Custom `Allocator::shrink` and `grow` methods added to eliminate unnecessary
-  data copies.
-- Some new tests.
-- MIT license option in addition to Apache v2.0 option.
+## What's new in 0.1.3
+- Microsoft Windows support.
 
 ## To do list
 - Concurrent threads access tests to detect race conditions.
 - 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
     may be too slow. Any suggestions on how to improve this?
-- Window$ support.
 - Main file page `mlock`-ing instead of log file immediate `fsync` in signal
     handler to increase write throughput and decrease latency.
 - Test multi-process concurrent read and exclusive write access.

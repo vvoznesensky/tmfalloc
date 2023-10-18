@@ -13,13 +13,19 @@ categories = ["caching", "database-implementations",
     "data-structures", "embedded", "memory-management"]
 
 [dependencies]
-nix = { version = "0.27", features = ["signal"] }
 ctor = "0.2"
-libc = "0.2"
 errno = "0.3"
 const-str = "0.5"
 intrusive-collections = "0.9"
 fork = "0.1"
 os_pipe = "1.1"
 indoc = "2.0"
+checked_int_cast = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = "0.42"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+nix = { version = "0.27", features = ["signal"] }
 
