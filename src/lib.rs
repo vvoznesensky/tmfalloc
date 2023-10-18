@@ -550,39 +550,21 @@ fn extend_file(mem: *const os::Void, size: usize, odb_fd: os::File,
     os::enlarge(odb_fd, offset.as_usize_checked().unwrap());
 }
 
-extern "C" fn sighandler(signum: os::int, info: *mut libc::siginfo_t,
-                            ucontext: *mut os::Void) {
-    let addr = unsafe{info.as_ref().unwrap().si_addr()} as *const os::Void;
-    if MEM_MAP.with_borrow(|mb| {
+// Returns true if the violation was successfully handled.
+fn memory_violation_handler(addr: *const os::Void, extend: bool) -> bool {
+    MEM_MAP.with_borrow(|mb| {
         let c = mb.upper_bound(ops::Bound::Included(&addr));
         if let Some((l, ta)) = c.key_value() {
             if addr < unsafe{l.byte_add(ta.size)} {
-                if signum == libc::SIGSEGV {
-                    save_old_page(*l, ta.size, ta.log_fd, ta.page_size, addr);
-                } else {
-                    assert!(signum == libc::SIGBUS);
+                if extend {
                     extend_file(*l, ta.size, ta.odb_fd, ta.page_size, addr);
+                } else {
+                    save_old_page(*l, ta.size, ta.log_fd, ta.page_size, addr);
                 }
                 true
             } else { false }
         } else { false }
-    }) { return };
-    let oa = if signum == libc::SIGSEGV {
-            unsafe { OLDACTSEGV.unwrap() }
-        } else {
-            assert_eq!(signum, libc::SIGBUS);
-            unsafe { OLDACTBUS.unwrap() }
-        };
-    if !oa.mask().contains(Signal::try_from(signum).unwrap()) {
-        match oa.handler() {
-            SigHandler::SigDfl => { 
-                panic_syserr!(libc::kill(libc::getpid(), libc::SIGABRT));
-            },
-            SigHandler::SigIgn => (),
-            SigHandler::Handler(f) => f(signum),
-            SigHandler::SigAction(f) => f(signum, info, ucontext),
-        }
-    }
+    })
 }
 
 #[derive(PartialEq, Debug)]
@@ -597,31 +579,14 @@ thread_local! {
         const { RefCell::new(BTreeMap::new()) };
 }
 
-// Sigaction stuff: signal handler, install/remove it on crate load/remove.
-static mut OLDACTSEGV: Option<SigAction> = None;
-static mut OLDACTBUS: Option<SigAction> = None;
-
 #[ctor::ctor]
 fn initialise_sigs() {
-    assert_eq!(unsafe{OLDACTSEGV}, None);
-    assert_eq!(unsafe{OLDACTBUS}, None);
-    let act = SigAction::new(SigHandler::SigAction(sighandler),
-               SaFlags::SA_RESTART.union(SaFlags::SA_SIGINFO), SigSet::empty());
-    unsafe { OLDACTBUS = Some(sigaction(Signal::SIGBUS, &act).unwrap()); }
-    unsafe { OLDACTSEGV = Some(sigaction(Signal::SIGSEGV, &act).unwrap()); }
-}
-
-fn finalise_sig(s: Signal, osa: &mut Option<SigAction>) {
-    unsafe{
-        sigaction(s, &osa.unwrap()).unwrap();
-        *osa = None;
-    }
+    unsafe { os::initialize_memory_violation_handler(memory_violation_handler) }
 }
 
 #[ctor::dtor]
 fn finalise_sigs() {
-    finalise_sig(Signal::SIGSEGV, &mut unsafe{OLDACTSEGV});
-    finalise_sig(Signal::SIGBUS, &mut unsafe{OLDACTBUS});
+    unsafe { os::finalize_memory_violation_handler() }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
