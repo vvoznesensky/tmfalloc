@@ -30,6 +30,9 @@ unsafe impl StdAllocator for Allocator {
             Result<NonNull<[u8]>, AllocError> {
         let os = old.size() + old.padding_needed_for(ALLOCATION_QUANTUM);
         let ns = new.size() + new.padding_needed_for(ALLOCATION_QUANTUM);
+        if os == ns {
+            return Ok(NonNull::slice_from_raw_parts(p, ns))
+        }
         let h = (self.address as *mut HeaderOfHeader).as_mut().unwrap();
         let fbp = p.as_ptr() as *const FreeBlock;
         let cu = h.by_address.lower_bound(IntrusiveIncluded(&fbp));

@@ -98,13 +98,16 @@ fn grow_and_shrink() {
     w.tworoads.extend_from_slice(b" both\n"); //+34=70
     assert_eq!(a2, w.tworoads.as_ptr());
     w.onegin.extend_from_slice(b"when he was taken gravely ill,\n"); //+31=68
-    assert_ne!(a1, w.onegin.as_ptr());
+    let a1m = w.onegin.as_ptr();
+    assert_ne!(a1, a1m);
     w.commit();
     w.tworoads.truncate(l2);
     w.tworoads.shrink_to_fit();
+    println!("{a1:p} {a2:p} {a1m:p}");
     w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n");//30
     w.threelittlepigs.extend_from_slice(b"And I, I may tell you, a tale\n");//60
     let a3 = w.threelittlepigs.as_ptr();
+    println!("{a1:p} {a2:p} {a3:p} {a1m:p}");
     assert_eq!(a3, a1);
     w.onegin.truncate(l1);
     w.onegin.shrink_to_fit();
@@ -112,7 +115,6 @@ fn grow_and_shrink() {
     let a4 = w.fourseasons.as_ptr();
     assert!(a2 < a4);
     assert_eq!(unsafe { a2.byte_add(64) }, a4);
-    let a1m = w.onegin.as_ptr();
     assert!(a4 < a1m);
     assert_eq!(unsafe { a4.byte_add(ALLOCATION_QUANTUM) }, a1m);
     w.threelittlepigs.extend_from_slice(indoc::indoc!(b"
