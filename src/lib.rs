@@ -4,12 +4,16 @@
 //! ```
 //! # let _ = std::fs::remove_file("test1.odb");
 //! # let _ = std::fs::remove_file("test1.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6100000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6100000;
 //! ##[derive(Debug)]
 //! struct S { /* some fields */ };
-//! let h = tmfalloc::Holder::<S>::new("test1", None, tmfalloc::TI,
+//! let h = tmfalloc::Holder::<S>::new("test1", Some(ADDRESS), tmfalloc::MI,
 //!         0xfedcab0987654321, |a| { S{ /* ... */ } }).unwrap();
 //! // Detects memory areas overlapping:
-//! match tmfalloc::Holder::<S>::new("test1", None, tmfalloc::TI,
+//! match tmfalloc::Holder::<S>::new("test1", None, tmfalloc::MI,
 //!         0xfedcab0987654321, |a| { panic!("Impossible!") }).unwrap_err() {
 //!     tmfalloc::Error::IoError(e) =>
 //!         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists),
@@ -23,23 +27,27 @@
 //! ```
 //! # let _ = std::fs::remove_file("test2.odb");
 //! # let _ = std::fs::remove_file("test2.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6200000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6200000;
 //! struct S(u64);
-//! let mut h1 = tmfalloc::Holder::<S>::new("test2", Some(0x70ffefe00000),
-//!     tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! let mut h1 = tmfalloc::Holder::<S>::new("test2", Some(ADDRESS),
+//!     tmfalloc::MI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! let mut w = h1.write();
 //! w.0 = 31415926;
 //!
 //! w.commit();
 //! assert_eq!(w.0, 31415926);
 //! drop(w);
-//! assert_eq!(h1.address(), 0x70ffefe00000);
-//! assert_eq!(h1.size(), tmfalloc::TI);
 //! drop(h1);
 //!
-//! let h2 = tmfalloc::Holder::<S>::new("test2", None, tmfalloc::TI,
+//! let h2 = tmfalloc::Holder::<S>::new("test2", None, tmfalloc::MI,
 //!     0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 31415926);
+//! assert_eq!(h2.address(), ADDRESS);
+//! assert_eq!(h2.size(), tmfalloc::MI);
 //! # let _ = std::fs::remove_file("test2.odb");
 //! # let _ = std::fs::remove_file("test2.log");
 //! ```
@@ -49,9 +57,13 @@
 //! ```
 //! # let _ = std::fs::remove_file("test3.odb");
 //! # let _ = std::fs::remove_file("test3.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6300000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6300000;
 //! # struct S(u64);
-//! # let mut h1 = tmfalloc::Holder::<S>::new("test3", Some(0x70ffefe00000),
-//! #    tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! # let mut h1 = tmfalloc::Holder::<S>::new("test3", Some(ADDRESS),
+//! #    tmfalloc::MI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! # let mut w = h1.write();
 //! // --snip--
 //! w.0 = 31415926;
@@ -61,7 +73,7 @@
 //! // --snip--
 //! # drop(w);
 //! # drop(h1);
-//! # let h2 = tmfalloc::Holder::<S>::new("test3", None, tmfalloc::TI,
+//! # let h2 = tmfalloc::Holder::<S>::new("test3", None, tmfalloc::MI,
 //! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 2718281828);
@@ -73,9 +85,13 @@
 //! ```
 //! # let _ = std::fs::remove_file("test4.odb");
 //! # let _ = std::fs::remove_file("test4.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6400000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6400000;
 //! # struct S(u64);
-//! # let mut h1 = tmfalloc::Holder::<S>::new("test4", Some(0x70ffefe00000),
-//! #    tmfalloc::TI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! # let mut h1 = tmfalloc::Holder::<S>::new("test4", Some(ADDRESS),
+//! #    tmfalloc::MI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
 //! # let mut w = h1.write();
 //! // --snip--
 //! w.0 = 31415926;
@@ -84,7 +100,7 @@
 //! drop(w);
 //! drop(h1);
 //! // --snip--
-//! # let h2 = tmfalloc::Holder::<S>::new("test4", None, tmfalloc::TI,
+//! # let h2 = tmfalloc::Holder::<S>::new("test4", None, tmfalloc::MI,
 //! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 2718281828);
@@ -97,6 +113,10 @@
 //! ##![feature(allocator_api, btreemap_alloc)]
 //! # let _ = std::fs::remove_file("test5.odb");
 //! # let _ = std::fs::remove_file("test5.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6500000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6500000;
 //! type A = tmfalloc::Allocator;
 //! type V = std::vec::Vec<u8, A>;
 //! struct S {
@@ -113,8 +133,8 @@
 //!         s: std::collections::BTreeSet::<usize, A>::new_in(a),
 //!     }
 //! } }
-//! let mut h1 = tmfalloc::Holder::<S>::new("test5", Some(0x70ffefe00000),
-//!                          tmfalloc::TI, 0xfedcba9876543210, S::new).unwrap();
+//! let mut h1 = tmfalloc::Holder::<S>::new("test5", Some(ADDRESS),
+//!                          tmfalloc::MI, 0xfedcba9876543210, S::new).unwrap();
 //! let mut w = h1.write();
 //! let a: A = w.allocator();
 //! w.v.extend_from_slice(b"Once upon a time...");
@@ -128,7 +148,7 @@
 //! drop(w);
 //! drop(h1);
 //!
-//! let h2 = tmfalloc::Holder::<S>::new("test5", None, tmfalloc::TI,
+//! let h2 = tmfalloc::Holder::<S>::new("test5", None, tmfalloc::MI,
 //!          0xfedcba9876543210, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.v, b"Once upon a time...");
@@ -151,9 +171,13 @@
 //! ##![feature(allocator_api)]
 //! # let _ = std::fs::remove_file("test6.odb");
 //! # let _ = std::fs::remove_file("test6.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6600000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6600000;
 //! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
-//! let mut h = tmfalloc::Holder::<V>::new("test6", Some(0x70ffefe00000),
-//!         tmfalloc::TI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
+//! let mut h = tmfalloc::Holder::<V>::new("test6", Some(ADDRESS),
+//!         tmfalloc::MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(b"Once upon a time...");
 //! let address1 = w.as_ptr();
@@ -172,25 +196,36 @@
 //! # let _ = std::fs::remove_file("test6.log");
 //! ```
 //!
-//! ## Storage can be expanded
+//! ## Storage can be expanded, but not trimmed
 //! ```
 //! ##![feature(allocator_api)]
 //! # let _ = std::fs::remove_file("test7.odb");
 //! # let _ = std::fs::remove_file("test7.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6700000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6700000;
 //! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
-//! let mut h = tmfalloc::Holder::<V>::new("test7", Some(0x70ffefe00000),
+//! let mut h = tmfalloc::Holder::<V>::new("test7", Some(ADDRESS),
 //!           tmfalloc::MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(&[b'.'; tmfalloc::MI - 2 * tmfalloc::KI]);
 //! w.commit();
 //! drop(w);
 //! drop(h);
-//! let mut h = tmfalloc::Holder::<V>::new("test7", Some(0x70ffefe00000), 2 *
-//!             tmfalloc::MI, 0xfedcba9876543210, |a| { panic!("!")}).unwrap();
+//! let mut h = tmfalloc::Holder::<V>::new("test7", None, 2 *
+//!             tmfalloc::MI, 0xfedcba9876543210, |a| { panic!("!") }).unwrap();
 //! let mut w = h.write();
 //! w.clear();
 //! w.shrink_to_fit();
 //! w.commit();
+//! drop(w);
+//! drop(h);
+//! match tmfalloc::Holder::<V>::new("test7", None, tmfalloc::MI,
+//!             0xfedcba9876543210, |a| { panic!("!") }).unwrap_err() {
+//!     tmfalloc::Error::WrongSize => {},
+//!     _ => panic!("Wrong type of error")
+//! }
 //! # let _ = std::fs::remove_file("test7.odb");
 //! # let _ = std::fs::remove_file("test7.log");
 //! ```
@@ -301,6 +336,7 @@ pub const KI: usize = 1024;
 pub const MI: usize = 1024 * KI;
 /// Gi, gibi
 pub const GI: usize = 1024 * MI;
+#[cfg(target_pointer_width = "64")]
 /// Ti, tebi
 pub const TI: usize = 1024 * GI;
 

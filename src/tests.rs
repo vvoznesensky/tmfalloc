@@ -11,7 +11,7 @@ fn page_boundary() {
     let _ = std::fs::remove_file("test_page_boundary.odb");
     let _ = std::fs::remove_file("test_page_boundary.log");
     type V = Vec<u64, Allocator>;
-    let mut h = Holder::<V>::new("test_page_boundary", Some(0x70ffefe00000),
+    let mut h = Holder::<V>::new("test_page_boundary", None,
             MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
     let mut w = h.write();
     const I: usize = 16*KI;
@@ -41,8 +41,7 @@ fn read_recovery() {
     let (mut reader_parent, mut writer_child) = os_pipe::pipe().unwrap();
     match fork::fork() {
         Ok(fork::Fork::Parent(_)) => {
-            let h = Holder::<u64>::new("test_read_recovery",
-                Some(0x70ffefc00000),
+            let h = Holder::<u64>::new("test_read_recovery", None,
                 MI, 0xfedcba9876543210, |_| { 0 }).unwrap();
             writer_parent.write_all(b"1").unwrap();
             let mut b: [u8; 1] = [b'0'];
@@ -54,8 +53,7 @@ fn read_recovery() {
             let mut b: [u8; 1] = [b'0'];
             assert_eq!(reader_child.read(&mut b).unwrap(), 1);
             assert_eq!(&b, b"1");
-            let mut h = Holder::<u64>::new("test_read_recovery",
-                Some(0x70ffefc00000),
+            let mut h = Holder::<u64>::new("test_read_recovery", None,
                 MI, 0xfedcba9876543210, |_| { panic!("Impossible!") }).unwrap();
             let mut w = h.write();
             *w = 1;
@@ -80,8 +78,8 @@ fn grow_and_shrink() {
         threelittlepigs: V,
         fourseasons: V,
     }
-    let mut h = Holder::<S>::new("test_grow_and_shrink", Some(0x70ffefa00000),
-            MI, 0xfedcba9876543210, |a| {
+    let mut h = Holder::<S>::new("test_grow_and_shrink",
+            None, MI, 0xfedcba9876543210, |a| {
                 S {
                     onegin: V::new_in(a.clone()),
                     tworoads: V::new_in(a.clone()),
@@ -89,35 +87,35 @@ fn grow_and_shrink() {
                     fourseasons: V::new_in(a.clone()),
                 } }).unwrap();
     let mut w = h.write();
-    w.onegin.extend_from_slice(b"My uncle has most honest principles:\n");
+    w.onegin.extend_from_slice(b"My uncle has most honest principles:\n"); //37
     let a1 = w.onegin.as_ptr();
     let l1 = w.onegin.len();
-    w.tworoads.extend_from_slice(b"TWO roads diverged in a yellow wood\n");
+    w.tworoads.extend_from_slice(b"TWO roads diverged in a yellow wood\n"); //36
     let a2 = w.tworoads.as_ptr();
     let l2 = w.tworoads.len();
     w.tworoads.extend_from_slice(b"And sorry I could not travel");
     assert_eq!(a2, w.tworoads.as_ptr());
-    w.tworoads.extend_from_slice(b" both\n");
+    w.tworoads.extend_from_slice(b" both\n"); //+34=70
     assert_eq!(a2, w.tworoads.as_ptr());
-    w.onegin.extend_from_slice(b"when he was taken gravely ill,\n");
+    w.onegin.extend_from_slice(b"when he was taken gravely ill,\n"); //+31=68
     assert_ne!(a1, w.onegin.as_ptr());
     w.commit();
     w.tworoads.truncate(l2);
     w.tworoads.shrink_to_fit();
-    w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n");
+    w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n");//30
+    w.threelittlepigs.extend_from_slice(b"And I, I may tell you, a tale\n");//60
     let a3 = w.threelittlepigs.as_ptr();
     assert_eq!(a3, a1);
     w.onegin.truncate(l1);
     w.onegin.shrink_to_fit();
-    w.fourseasons.extend_from_slice(b"All four seasons are special somehow\n");
+    w.fourseasons.extend_from_slice(b"All four seasons are special");
     let a4 = w.fourseasons.as_ptr();
     assert!(a2 < a4);
     assert_eq!(unsafe { a2.byte_add(64) }, a4);
     let a1m = w.onegin.as_ptr();
     assert!(a4 < a1m);
-    assert_eq!(unsafe { a4.byte_add(64) }, a1m);
+    assert_eq!(unsafe { a4.byte_add(ALLOCATION_QUANTUM) }, a1m);
     w.threelittlepigs.extend_from_slice(indoc::indoc!(b"
-        And I, I may tell you, a tale
         A tale of three, little pigs
         And a big, bad, wolfff
         "));

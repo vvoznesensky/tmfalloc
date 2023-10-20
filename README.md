@@ -34,6 +34,7 @@ client cache, embedded application data storage, etc.
 
 ## What's new in 0.1.3
 - Microsoft Windows support.
+- Debugged and tested on 32-bit CPU architecture.
 
 ## To do list
 - Concurrent threads access tests to detect race conditions.
