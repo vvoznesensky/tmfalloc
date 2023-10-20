@@ -34,7 +34,7 @@ client cache, embedded application data storage, etc.
 
 ## What's new in 0.1.3
 - Microsoft Windows support.
-- Debugged and tested on 32-bit CPU architecture.
+- Debugged and tested on `x86` 32-bit CPU architecture.
 - Fixed a non-critical bug in `Allocator::grow`.
 
 ## To do list
@@ -55,6 +55,5 @@ client cache, embedded application data storage, etc.
 Vladimir Voznesenskiy [\<vvoznesensky@yandex.ru\>](
     mailto:vvoznesensky@yandex.ru). Looking for interesting Rust job.
 
-Comments, suggestions, bug reports, pull requests, praises and reasonable curses
-are welcome.
+Feedback is welcome.
 
