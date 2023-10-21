@@ -216,6 +216,8 @@
 //! let mut h = tmfalloc::Holder::<V>::new("test7", None, 2 *
 //!             tmfalloc::MI, 0xfedcba9876543210, |a| { panic!("!") }).unwrap();
 //! let mut w = h.write();
+//! w.extend_from_slice(&[b'.'; tmfalloc::MI]);
+//! w.commit();
 //! w.clear();
 //! w.shrink_to_fit();
 //! w.commit();

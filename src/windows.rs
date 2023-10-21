@@ -1,6 +1,10 @@
 // Microsoft Windows family abstractions.
+use checked_int_cast::CheckedIntCast;
 use errno;
-use windows_sys::{Handle, Win32};
+use windows_sys::{
+    Handle,
+    Win32::{Foundation, Storage::FileSystem, System::Memory},
+};
 
 pub type File = Handle;
 pub type Void = c_void;
@@ -25,36 +29,54 @@ macro_rules! panic_syserr {
         }
     }};
 }
+macro_rules! panic_syserr_invalid {
+    ( $rval:expr, $invalid:expr ) => {{
+        if unsafe { $rval } == $invalid {
+            let e = errno();
+            panic!("System error #{}: {}", e.0, e);
+        }
+    }};
+}
 
 pub fn open(pathname: &String) -> std::io::Result<File> {
-    result!(libc::open(
-        pathname.as_ptr() as *const i8,
-        libc::O_CREAT | libc::O_RDWR,
-        0o666
-    ))
+    result!(
+        FileSystem::CreateFileA(
+            pathname.as_ptr(),
+            Foundation::GENERIC_READ | Foundation::GENERIC_WRITE,
+            FileSystem::FILE_SHARE_READ | FileSystem::FILE_SHARE_WRITE,
+            None,
+            FileSystem::OPEN_ALWAYS,
+            FileSystem::FILE_ATTRIBUTE_NORMAL,
+            None
+        ),
+        Foundation::INVALID_HANDLE_VALUE
+    )
 }
 
 pub unsafe fn read(f: File, buf: *mut Void, s: usize) -> usize {
-    panic_syserr!(libc::read(f, buf, s))
+    let mut rval: u32;
+    panic_syserr!(FileSystem::read(f, buf, s, &mut rval));
+    rval
 }
 
-pub fn write_page(f: File, page_no: u32, page: *const Void, page_size: usize) {
-    let iovec = [
-        libc::iovec {
-            iov_base: std::ptr::from_ref(&page_no) as *mut c_void,
-            iov_len: 4,
-        },
-        libc::iovec { iov_base: page as *mut c_void, iov_len: page_size },
-    ];
-    panic_syserr!(libc::writev(f, iovec.as_ptr(), 2));
+pub fn write_page(f: File, pno: u32, page: *const Void, psize: usize) {
+    let mut wrtn: u32;
+    panic_syserr!(FileSystem::WriteFile(f, &pno as *const u8, 4, &wrtn, None));
+    assert_eq!(wrtn, 4);
+    let ps = psize.as_u32_checked().unwrap();
+    panic_syserr!(FileSystem::WriteFile(f, page as *const u8, ps, &wrtn, None));
+    assert_eq!(wrtn, ps);
 }
 
 pub fn close(f: File) {
-    panic_syserr!(libc::close(f));
+    panic_syserr!(FileSystem::CloseHandle(f));
 }
 
 pub fn seek_begin(f: File) {
-    panic_syserr!(libc::lseek(f, 0, libc::SEEK_SET));
+    panic_syserr_invalid!(
+        FileSystem::SetFilePointer(f, 0, None, FileSystem::FILE_BEGIN),
+        FileSystem::INVALID_SET_FILE_POINTER
+    );
 }
 
 pub fn mmap(f: File, a: *mut Void, size: usize) -> std::io::Result<*mut Void> {
@@ -68,15 +90,18 @@ pub fn munmap(a: *mut Void, s: usize) {
 }
 
 pub fn mprotect_rw(a: *mut Void, s: usize) {
-    panic_syserr!(libc::mprotect(a, s, libc::PROT_READ | libc::PROT_WRITE));
+    let _ppf: Memory::PAGE_PROTECTION_FLAGS;
+    panic_syserr!(Memory::VirtualProtect(a, s, Memory::PAGE_READWRITE, &_ppf));
 }
 
 pub fn mprotect_r(a: *mut Void, s: usize) {
-    panic_syserr!(libc::mprotect(a, s, libc::PROT_READ));
+    let _ppf: Memory::PAGE_PROTECTION_FLAGS;
+    panic_syserr!(Memory::VirtualProtect(a, s, Memory::PAGE_READ, &_ppf));
 }
 
 pub fn mprotect_w(a: *mut Void, s: usize) {
-    panic_syserr!(libc::mprotect(a, s, libc::PROT_WRITE));
+    let _ppf: Memory::PAGE_PROTECTION_FLAGS;
+    panic_syserr!(Memory::VirtualProtect(a, s, Memory::PAGE_WRITE, &_ppf));
 }
 
 // Making log file ready for the next transaction.
@@ -97,7 +122,7 @@ pub fn not_empty(lfd: File) -> bool {
 
 // File sync
 pub fn sync(lfd: File) {
-    panic_syserr!(libc::fdatasync(lfd));
+    panic_syserr!(FileSystem::FlushFileBuffers(lfd));
 }
 
 // Flock the main file.

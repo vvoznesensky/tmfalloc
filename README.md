@@ -57,7 +57,7 @@ client cache, embedded application data storage, etc.
 ## Author and feedback
 
 Vladimir Voznesenskiy [\<vvoznesensky@yandex.ru\>](
-    mailto:vvoznesensky@yandex.ru). Looking for interesting Rust job.
+    mailto:vvoznesensky@yandex.ru). Looking for a Rust job.
 
 Feedback is welcome.
 
