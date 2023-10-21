@@ -22,9 +22,10 @@ client cache, embedded application data storage, etc.
  * Average allocation and deallocation cost is `O(log(number of free blocks))`
    (plus possible file operations costs).
  * Allows allocation arena expansion.
+ * Runs on Linux and Windows.
+ * Runs on 32- and 64-bit CPUs.
 
 ## Caveats on current limitations
- * Only Linux platforms are supported at the moment.
  * Storage `Holder` does not endure process `fork`.
  * `unsafe`-saturated, so highly experimental.
  * Explicit memory mapping address specification on storage initialization is
@@ -33,18 +34,21 @@ client cache, embedded application data storage, etc.
    architectures.
 
 ## What's new in 0.1.3
-- Microsoft Windows support.
-- Debugged and tested on `x86` 32-bit CPU architecture.
-- Fixed a non-critical bug in `Allocator::grow`.
+ * Microsoft Windows support.
+ * Debugged and tested on `x86` CPU, so now both 32 and 64-bit
+   architectures are supported.
+ * Fixed a non-critical bug in `Allocator::grow`.
 
 ## To do list
-- Concurrent threads access tests to detect race conditions.
-- 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
-    may be too slow. Any suggestions on how to improve this?
-- Main file page `mlock`-ing instead of log file immediate `fsync` in signal
-    handler to increase write throughput and decrease latency.
-- Test multi-process concurrent read and exclusive write access.
-- 100% code lines test coverage. How to collect coverage of docs tests?
+ * Concurrent threads access tests to detect race conditions.
+ * 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
+   may be too slow. Any suggestions on how to improve this?
+ * Main file page `mlock`-ing instead of log file immediate `fsync` in signal
+   handler to increase write throughput and decrease latency.
+ * Test multi-process concurrent read and exclusive write access.
+ * 100% code lines test coverage. How to collect coverage of docs tests?
+ * Do less RBTrees traversal on (de/re)allocations by (re)using already
+   available pointers.
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or

@@ -235,7 +235,7 @@
 //! ```
 //! # let _ = std::fs::remove_file("test7.odb");
 //! # let _ = std::fs::remove_file("test7.log");
-//! // 
+//! //
 //! # let _ = std::fs::remove_file("test7.odb");
 //! # let _ = std::fs::remove_file("test7.log");
 //! ```
@@ -252,20 +252,28 @@
 //! ```
 //! ```*/
 
-#![feature(allocator_api, pointer_byte_offsets, btree_cursors, concat_bytes,
-    ptr_from_ref, const_mut_refs, alloc_layout_extra, slice_ptr_get,
-    btreemap_alloc)] 
+#![feature(
+    allocator_api,
+    pointer_byte_offsets,
+    btree_cursors,
+    concat_bytes,
+    ptr_from_ref,
+    const_mut_refs,
+    alloc_layout_extra,
+    slice_ptr_get,
+    btreemap_alloc
+)]
 
-use ctor;
 use const_str;
+use ctor;
+use intrusive_collections::intrusive_adapter;
+use intrusive_collections::{KeyAdapter, RBTree, RBTreeLink, UnsafeRef};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use intrusive_collections::intrusive_adapter;
-use intrusive_collections::{RBTreeLink, RBTree, KeyAdapter, UnsafeRef};
 use std::marker;
 use std::mem::ManuallyDrop;
 use std::ops;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Mutex, Arc};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub mod allocator;
 pub use allocator::Allocator;
 use checked_int_cast::CheckedIntCast;
@@ -286,14 +294,20 @@ impl FileHolder {
     fn read_header_of_header(&self) -> Option<HeaderOfHeader> {
         let mut h = std::mem::MaybeUninit::<HeaderOfHeader>::uninit();
         const S: usize = std::mem::size_of::<HeaderOfHeader>();
-        let read = unsafe {
-                        os::read(self.0, h.as_mut_ptr() as *mut os::Void, S) };
-        if read == S { Some(unsafe{ h.assume_init() }) } else { None }
+        let read =
+            unsafe { os::read(self.0, h.as_mut_ptr() as *mut os::Void, S) };
+        if read == S {
+            Some(unsafe { h.assume_init() })
+        } else {
+            None
+        }
     }
 }
 impl ops::Deref for FileHolder {
     type Target = os::File;
-    fn deref(&self) -> &os::File { &self.0 }
+    fn deref(&self) -> &os::File {
+        &self.0
+    }
 }
 impl Drop for FileHolder {
     fn drop(&mut self) {
@@ -322,8 +336,8 @@ impl Drop for MapHolder {
 #[derive(Debug)]
 struct Arena {
     mem: MapHolder,
-    fd: FileHolder,     // Main file, mapped onto mem.
-    log_fd: FileHolder, // Log file, consists of pairs (u32 page #, page).
+    fd: FileHolder,      // Main file, mapped onto mem.
+    log_fd: FileHolder,  // Log file, consists of pairs (u32 page #, page).
     readers: Mutex<u32>, // Number of readers to apply and revoke flock once.
     page_size: usize,
 }
@@ -350,7 +364,7 @@ pub const TI: usize = 1024 * GI;
 #[derive(Debug, Clone)]
 pub struct Holder<'a, Root: 'a> {
     arena: Arc<RwLock<Arena>>,
-    phantom: marker::PhantomData<&'a Root>
+    phantom: marker::PhantomData<&'a Root>,
 }
 
 /// Error: all possible errors of [Holder] and arena initialization
@@ -365,7 +379,9 @@ pub enum Error {
     WrongSize,
 }
 impl From<std::io::Error> for Error {
-    fn from(value: std::io::Error) -> Self { Self::IoError(value) }
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
+    }
 }
 
 /// [Holder::new] initialization result
@@ -383,8 +399,13 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     ///
     /// `magick` - user-defined magick number to distinguish among different
     ///     versions of stored structures (i.e. schema). Dangerous to mess.
-    pub fn new(file_pfx: &str, arena_address: Option<usize>, arena_size: usize,
-                magick: u64, new_root: fn(Allocator) -> Root) -> Result<Self> {
+    pub fn new(
+        file_pfx: &str,
+        arena_address: Option<usize>,
+        arena_size: usize,
+        magick: u64,
+        new_root: fn(Allocator) -> Root,
+    ) -> Result<Self> {
         let ps = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
         assert!(ps > 0);
         let page_size = ps as usize;
@@ -394,12 +415,20 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         let h = fd.read_header_of_header();
         let ld = FileHolder::new(file_pfx, "log")?;
         let aa = match arena_address {
-            None => match h { None => 0, Some(ha) => ha.address, },
+            None => match h {
+                None => 0,
+                Some(ha) => ha.address,
+            },
             Some(a) => match h {
                 None => a,
-                Some(ha) => if a == ha.address { a }
-                            else { return Err(Error::WrongAddress) }
-            }
+                Some(ha) => {
+                    if a == ha.address {
+                        a
+                    } else {
+                        return Err(Error::WrongAddress);
+                    }
+                }
+            },
         } as *mut os::Void;
         let addr = MapHolder::new(*fd, aa, arena_size)?;
         let shown = addr.0 as usize;
@@ -417,7 +446,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     }
     /// Shared-lock the storage and get [Reader] smart pointer to the Root
     /// instance inside
-    pub fn read(&self) -> Reader::<Root> {
+    pub fn read(&self) -> Reader<Root> {
         let guard = self.arena.read().unwrap();
         {
             let mut readers = guard.readers.lock().unwrap();
@@ -426,8 +455,12 @@ impl<'a, Root: 'a> Holder<'a, Root> {
                 if os::not_empty(*guard.log_fd) {
                     os::unflock(*guard.fd);
                     os::flock_w(*guard.fd);
-                    rollback::<false>(*guard.fd, *guard.log_fd,
-                                                    guard.mem.0, guard.mem.1);
+                    rollback::<false>(
+                        *guard.fd,
+                        *guard.log_fd,
+                        guard.mem.0,
+                        guard.mem.1,
+                    );
                     os::flock_r(*guard.fd);
                 }
             }
@@ -439,8 +472,9 @@ impl<'a, Root: 'a> Holder<'a, Root> {
             phantom: marker::PhantomData,
         }
     }
-    fn internal_write<const PAGES_WRITABLE: bool>(&self) ->
-            InternalWriter<Root, PAGES_WRITABLE> {
+    fn internal_write<const PAGES_WRITABLE: bool>(
+        &self,
+    ) -> InternalWriter<Root, PAGES_WRITABLE> {
         let guard = self.arena.write().unwrap();
         os::flock_w(*guard.fd);
         rollback::<false>(*guard.fd, *guard.log_fd, guard.mem.0, guard.mem.1);
@@ -453,7 +487,9 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     }
     /// Exclusive-lock the storage and get [Writer] smart pointer to the Root
     /// instance inside
-    pub fn write(&mut self) -> Writer<Root> { self.internal_write::<true>() }
+    pub fn write(&mut self) -> Writer<Root> {
+        self.internal_write::<true>()
+    }
 
     /// Returns the numeric address of the arena space beginning
     pub fn address(&self) -> usize {
@@ -483,14 +519,18 @@ impl Drop for Arena {
 // Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
 // access of mem for this thread among threads that have access to this fd.
 // For further use in Holder and Writer.
-fn rollback<const PAGES_WRITABLE: bool>(fd: os::File, lfd: os::File,
-            mem: *mut os::Void, page_size: usize) {
+fn rollback<const PAGES_WRITABLE: bool>(
+    fd: os::File,
+    lfd: os::File,
+    mem: *mut os::Void,
+    page_size: usize,
+) {
     os::seek_begin(lfd);
     let mut page_no: u32 = 0; // 0 for suppressing compilation error
     let pgn_ptr = (&mut page_no as *mut u32) as *mut os::Void;
     while read_exactly(lfd, pgn_ptr, 4) == 4 {
         let offset = (page_no as usize) * page_size;
-        let addr = unsafe{mem.byte_add(offset)};
+        let addr = unsafe { mem.byte_add(offset) };
         if !PAGES_WRITABLE {
             os::mprotect_w(addr, page_size);
         }
@@ -513,14 +553,18 @@ fn commit(fd: os::File, lfd: os::File, mem: *mut os::Void, size: usize) {
 }
 
 // Read exactly count bytes or end from the file.
-fn read_exactly(lfd: os::File, buf: *mut os::Void, count: libc::size_t) ->
-                                                                        usize { 
+fn read_exactly(
+    lfd: os::File,
+    buf: *mut os::Void,
+    count: libc::size_t,
+) -> usize {
     let mut s: usize;
     let mut rval: usize = 0;
     let mut c = count;
     while c > 0 && {
-            s = unsafe { os::read(lfd, buf, c) };
-            s != 0} {
+        s = unsafe { os::read(lfd, buf, c) };
+        s != 0
+    } {
         rval += s;
         c -= s;
     }
@@ -530,21 +574,28 @@ fn read_exactly(lfd: os::File, buf: *mut os::Void, count: libc::size_t) ->
 ////////////////////////////////////////////////////////////////////////////////
 // SIGSEGV on write to read-only page and it's handler memory map
 impl<Root, const PAGES_WRITABLE: bool>
-        InternalWriter<'_, Root, PAGES_WRITABLE> {
+    InternalWriter<'_, Root, PAGES_WRITABLE>
+{
     fn setseg(&self) {
         let g = &self.guard;
         let s = g.mem.1;
         let b = g.mem.0 as *const os::Void;
-        let e = unsafe{b.byte_add(s)};
+        let e = unsafe { b.byte_add(s) };
         MEM_MAP.with_borrow_mut(|mb| {
             let mut c = mb.upper_bound(ops::Bound::Included(&b));
             if let Some((l, ta)) = c.key_value() {
-                assert!(unsafe{l.byte_add(ta.size)} <= b);
+                assert!(unsafe { l.byte_add(ta.size) } <= b);
                 c.move_next();
-                if let Some((l, _)) = c.key_value() { assert!(*l >= e); }
+                if let Some((l, _)) = c.key_value() {
+                    assert!(*l >= e);
+                }
             }
-            mb.insert(b, ThreadArena{ size: s, odb_fd: *g.fd,
-                                    log_fd: *g.log_fd, page_size: g.page_size});
+            mb.insert(b, ThreadArena {
+                size: s,
+                odb_fd: *g.fd,
+                log_fd: *g.log_fd,
+                page_size: g.page_size,
+            });
         });
     }
 
@@ -553,19 +604,28 @@ impl<Root, const PAGES_WRITABLE: bool>
         let b = g.mem.0 as *const os::Void;
         MEM_MAP.with_borrow_mut(|mb| {
             let r = mb.remove(&b).unwrap();
-            assert_eq!(r, ThreadArena{ size: g.mem.1, odb_fd: *g.fd,
-                                    log_fd: *g.log_fd, page_size: g.page_size});
+            assert_eq!(r, ThreadArena {
+                size: g.mem.1,
+                odb_fd: *g.fd,
+                log_fd: *g.log_fd,
+                page_size: g.page_size
+            });
         });
     }
 }
 
-fn save_old_page(mem: *const os::Void, size: usize, log_fd: os::File,
-                                    page_size: usize, addr: *const os::Void) {
-    let offs = unsafe{ addr.byte_add(1) }.align_offset(page_size) as isize + 1;
-    let begin = unsafe{ addr.byte_offset(offs - (page_size) as isize) };
+fn save_old_page(
+    mem: *const os::Void,
+    size: usize,
+    log_fd: os::File,
+    page_size: usize,
+    addr: *const os::Void,
+) {
+    let offs = unsafe { addr.byte_add(1) }.align_offset(page_size) as isize + 1;
+    let begin = unsafe { addr.byte_offset(offs - (page_size) as isize) };
     assert_eq!(begin.align_offset(page_size), 0);
     assert!(begin >= mem);
-    let pn = unsafe{ begin.byte_offset_from(mem) } / (page_size as isize);
+    let pn = unsafe { begin.byte_offset_from(mem) } / (page_size as isize);
     let page_no: u32 = u32::try_from(pn).unwrap();
     assert!(size / page_size > (page_no as usize));
     // XXX use writev
@@ -576,8 +636,13 @@ fn save_old_page(mem: *const os::Void, size: usize, log_fd: os::File,
 
 const EXTEND_BYTES: usize = 8;
 
-fn extend_file(mem: *const os::Void, size: usize, odb_fd: os::File,
-                                    page_size: usize, addr: *const os::Void) {
+fn extend_file(
+    mem: *const os::Void,
+    size: usize,
+    odb_fd: os::File,
+    page_size: usize,
+    addr: *const os::Void,
+) {
     let past_addr = unsafe { addr.byte_add(EXTEND_BYTES) };
     let offset = past_addr.align_offset(page_size);
     let e = unsafe { past_addr.byte_add(offset) };
@@ -591,15 +656,19 @@ fn memory_violation_handler(addr: *const os::Void, extend: bool) -> bool {
     MEM_MAP.with_borrow(|mb| {
         let c = mb.upper_bound(ops::Bound::Included(&addr));
         if let Some((l, ta)) = c.key_value() {
-            if addr < unsafe{l.byte_add(ta.size)} {
+            if addr < unsafe { l.byte_add(ta.size) } {
                 if extend {
                     extend_file(*l, ta.size, ta.odb_fd, ta.page_size, addr);
                 } else {
                     save_old_page(*l, ta.size, ta.log_fd, ta.page_size, addr);
                 }
                 true
-            } else { false }
-        } else { false }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     })
 }
 
@@ -629,12 +698,12 @@ fn finalise_sigs() {
 // Header stored in file
 #[repr(C, align(8))]
 struct HeaderOfHeader {
-    filetype: [u8; 8],  // Letters to show the file type "TMFALLOC"
-    version: [u8; 8],   // Crate major version
-    endian_bitness: u64,// Number of bits and on what end they start
-    magick: u64,        // Error prone fixture to check the user types version
-    address: usize,     // Base address of mapping to check
-    size: usize,        // Size of mapping to check
+    filetype: [u8; 8],   // Letters to show the file type "TMFALLOC"
+    version: [u8; 8],    // Crate major version
+    endian_bitness: u64, // Number of bits and on what end they start
+    magick: u64,         // Error prone fixture to check the user types version
+    address: usize,      // Base address of mapping to check
+    size: usize,         // Size of mapping to check
     // Ordered intrusive collections of FreeBlock-s.
     by_address: ManuallyDrop<RBTree<ByAddressAdapter>>,
     by_size_address: ManuallyDrop<RBTree<BySizeAddressAdapter>>,
@@ -647,42 +716,55 @@ struct Header<Root> {
 
 // Check if the memory map header is ok.
 // If empty, then prepare and commit, otherwise rollback.
-fn prep_header<'a, Root>(holder: &Holder::<'a, Root>, magick: u64, addr: usize,
-        size: usize, new_root: fn(Allocator) -> Root) -> Result<()> {
+fn prep_header<'a, Root>(
+    holder: &Holder<'a, Root>,
+    magick: u64,
+    addr: usize,
+    size: usize,
+    new_root: fn(Allocator) -> Root,
+) -> Result<()> {
     let w = &holder.internal_write::<false>();
     let header_state = header_is_ok_state(magick, addr, size)?;
     match header_state {
-        HeaderState::Fine => {} ,
+        HeaderState::Fine => {}
         HeaderState::NeedsToGrow => grow_up_free_block::<Root>(addr, size, &w),
-        HeaderState::Empty => initialize_header::<Root>(
-                                            addr, size, magick, &w, new_root),
+        HeaderState::Empty => {
+            initialize_header::<Root>(addr, size, magick, &w, new_root)
+        }
     }
     Ok(())
 }
-fn grow_up_free_block<Root>(addr: usize, size: usize,
-                                            w: &InternalWriter<Root, false>) {
+fn grow_up_free_block<Root>(
+    addr: usize,
+    size: usize,
+    w: &InternalWriter<Root, false>,
+) {
     let hp = addr as *mut Header<Root>;
-    let ptr = unsafe{hp.as_mut()}.unwrap();
-    let p = unsafe{hp.byte_add(ptr.h.size)} as *const FreeBlock;
+    let ptr = unsafe { hp.as_mut() }.unwrap();
+    let p = unsafe { hp.byte_add(ptr.h.size) } as *const FreeBlock;
     let ph = &mut ptr.h;
     let cl = ph.by_address.back_mut();
     let old_size = ph.size;
-    match cl.get() { // lower neighbour
-        None => 
-            FreeBlock::initialize(ph,
-                        unsafe { hp.byte_add(old_size) }  as *const FreeBlock,
-                        size - old_size),
+    match cl.get() {
+        // lower neighbour
+        None => FreeBlock::initialize(
+            ph,
+            unsafe { hp.byte_add(old_size) } as *const FreeBlock,
+            size - old_size,
+        ),
         Some(l) => {
             let lp = l as *const FreeBlock;
-            if unsafe{ lp.byte_add(l.size) } < p {
-                FreeBlock::initialize(ph,
-                        unsafe { hp.byte_add(old_size) }  as *const FreeBlock,
-                        size - old_size)
+            if unsafe { lp.byte_add(l.size) } < p {
+                FreeBlock::initialize(
+                    ph,
+                    unsafe { hp.byte_add(old_size) } as *const FreeBlock,
+                    size - old_size,
+                )
             } else {
                 unsafe { ph.by_size_address.cursor_mut_from_ptr(lp) }.remove();
                 let lr = unsafe { lp.cast_mut().as_mut() }.unwrap();
                 lr.size += size - old_size;
-                ph.by_size_address.insert(unsafe { UnsafeRef::from_raw(lp) } );
+                ph.by_size_address.insert(unsafe { UnsafeRef::from_raw(lp) });
             }
         }
     };
@@ -690,10 +772,15 @@ fn grow_up_free_block<Root>(addr: usize, size: usize,
     let wg = &w.guard;
     commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
 }
-fn initialize_header<Root>(addr: usize, size: usize, magick: u64,
-            w: &InternalWriter<Root, false>, new_root: fn(Allocator) -> Root) {
+fn initialize_header<Root>(
+    addr: usize,
+    size: usize,
+    magick: u64,
+    w: &InternalWriter<Root, false>,
+    new_root: fn(Allocator) -> Root,
+) {
     let hp = addr as *mut Header<Root>;
-    let ptr = unsafe{hp.as_mut()}.unwrap();
+    let ptr = unsafe { hp.as_mut() }.unwrap();
     ptr.h = HeaderOfHeader {
         filetype: FILETYPE,
         version: VERSION,
@@ -701,18 +788,19 @@ fn initialize_header<Root>(addr: usize, size: usize, magick: u64,
         magick,
         address: addr,
         size,
-        by_address: ManuallyDrop::new(RBTree::new(
-                                        ByAddressAdapter::new())),
+        by_address: ManuallyDrop::new(RBTree::new(ByAddressAdapter::new())),
         by_size_address: ManuallyDrop::new(RBTree::new(
-                                        BySizeAddressAdapter::new())),
+            BySizeAddressAdapter::new(),
+        )),
     };
     let fbraw = unsafe { hp.add(1) };
     let fbaddr = fbraw as usize;
-    let fbraw = unsafe { fbraw.byte_add(ALLOCATION_QUANTUM -
-                    (fbaddr % ALLOCATION_QUANTUM)) } as *mut FreeBlock;
-    FreeBlock::initialize(&mut ptr.h, fbraw,
-        unsafe { hp.byte_add(size).byte_offset_from(fbraw)
-                                                .try_into().unwrap()});
+    let fbraw = unsafe {
+        fbraw.byte_add(ALLOCATION_QUANTUM - (fbaddr % ALLOCATION_QUANTUM))
+    } as *mut FreeBlock;
+    FreeBlock::initialize(&mut ptr.h, fbraw, unsafe {
+        hp.byte_add(size).byte_offset_from(fbraw).try_into().unwrap()
+    });
     ptr.root = ManuallyDrop::new(new_root(w.allocator()));
     let wg = &w.guard;
     commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
@@ -723,10 +811,17 @@ const V_PREF: &str = const_str::repeat!(" ", 8 - V.len());
 const V_STR: &str = const_str::concat!(V_PREF, V);
 const VERSION: [u8; 8] = const_str::to_byte_array!(V_STR);
 const ENDIAN_BITNESS: u64 = std::mem::size_of::<usize>() as u64;
-enum HeaderState { Empty, NeedsToGrow, Fine }
-fn header_is_ok_state(magick: u64, address: usize,
-                        size: usize) -> Result<HeaderState> {
-    let ptr = unsafe{(address as *const HeaderOfHeader).as_ref()}.unwrap();
+enum HeaderState {
+    Empty,
+    NeedsToGrow,
+    Fine,
+}
+fn header_is_ok_state(
+    magick: u64,
+    address: usize,
+    size: usize,
+) -> Result<HeaderState> {
+    let ptr = unsafe { (address as *const HeaderOfHeader).as_ref() }.unwrap();
     if ptr.filetype == [0; 8] && ptr.magick == 0 && ptr.address == 0 {
         Ok(HeaderState::Empty)
     } else if ptr.filetype != FILETYPE {
@@ -743,7 +838,9 @@ fn header_is_ok_state(magick: u64, address: usize,
         Err(Error::WrongSize)
     } else if ptr.size < size {
         Ok(HeaderState::NeedsToGrow)
-    } else { Ok(HeaderState::Fine) }
+    } else {
+        Ok(HeaderState::Fine)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -755,20 +852,23 @@ fn header_is_ok_state(magick: u64, address: usize,
 pub struct Reader<'a, Root> {
     guard: RwLockReadGuard<'a, Arena>,
     arena: Arc<RwLock<Arena>>,
-    phantom: marker::PhantomData<&'a Root>
+    phantom: marker::PhantomData<&'a Root>,
 }
 impl<Root> ops::Deref for Reader<'_, Root> {
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe{(self.guard.mem.0 as *const Header<Root>).as_ref()}
-                                                                .unwrap().root
+        &unsafe { (self.guard.mem.0 as *const Header<Root>).as_ref() }
+            .unwrap()
+            .root
     }
 }
 impl<Root> Drop for Reader<'_, Root> {
     fn drop(&mut self) {
         let arena = self.arena.read().unwrap();
         let mut readers = arena.readers.lock().unwrap();
-        if *readers == 1 { os::unflock(*arena.fd); }
+        if *readers == 1 {
+            os::unflock(*arena.fd);
+        }
         assert!(*readers > 0);
         *readers -= 1;
     }
@@ -782,10 +882,11 @@ impl<Root> Drop for Reader<'_, Root> {
 pub struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
     guard: RwLockWriteGuard<'a, Arena>,
     //_arena: Arc<RwLock<Arena>>,
-    phantom: marker::PhantomData<&'a Root>
+    phantom: marker::PhantomData<&'a Root>,
 }
 impl<'a, Root, const PAGES_WRITABLE: bool>
-        InternalWriter<'a, Root, PAGES_WRITABLE> {
+    InternalWriter<'a, Root, PAGES_WRITABLE>
+{
     /// Rollback the current transaction. Automatically called in
     /// [InternalWriter::drop] method.
     pub fn rollback(&self) {
@@ -803,22 +904,27 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
     }
 }
 impl<Root, const PAGES_WRITABLE: bool> ops::Deref
-        for InternalWriter<'_, Root, PAGES_WRITABLE> {
+    for InternalWriter<'_, Root, PAGES_WRITABLE>
+{
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe{(self.guard.mem.0 as *const Header<Root>).as_ref()}
-            .unwrap().root
+        &unsafe { (self.guard.mem.0 as *const Header<Root>).as_ref() }
+            .unwrap()
+            .root
     }
 }
 impl<Root, const PAGES_WRITABLE: bool> ops::DerefMut
-        for InternalWriter<'_, Root, PAGES_WRITABLE> {
+    for InternalWriter<'_, Root, PAGES_WRITABLE>
+{
     fn deref_mut(&mut self) -> &mut Root {
-        &mut unsafe{(self.guard.mem.0 as *mut Header<Root>).as_mut()}
-            .unwrap().root
+        &mut unsafe { (self.guard.mem.0 as *mut Header<Root>).as_mut() }
+            .unwrap()
+            .root
     }
 }
 impl<Root, const PAGES_WRITABLE: bool> Drop
-        for InternalWriter<'_, Root, PAGES_WRITABLE> {
+    for InternalWriter<'_, Root, PAGES_WRITABLE>
+{
     fn drop(&mut self) {
         let a = &self.guard;
         rollback::<PAGES_WRITABLE>(*a.fd, *a.log_fd, a.mem.0, a.mem.1);
@@ -853,14 +959,14 @@ impl FreeBlock {
         let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
         let fbref = unsafe { fbptr.as_mut() }.unwrap();
         fbref._padding = !fbref._padding; // Cause SIGBUS if file too small.
-        *fbref = ManuallyDrop::new(FreeBlock{
+        *fbref = ManuallyDrop::new(FreeBlock {
             by_address: RBTreeLink::new(),
             by_size_address: RBTreeLink::new(),
             size,
-            _padding: 0
+            _padding: 0,
         });
-        h.by_address.insert(unsafe { UnsafeRef::from_raw(fbr) } );
-        h.by_size_address.insert(unsafe { UnsafeRef::from_raw(fbr) } );
+        h.by_address.insert(unsafe { UnsafeRef::from_raw(fbr) });
+        h.by_size_address.insert(unsafe { UnsafeRef::from_raw(fbr) });
     }
     fn finalize(h: &mut HeaderOfHeader, fbr: *const FreeBlock) {
         unsafe { h.by_address.cursor_mut_from_ptr(fbr) }.remove();
@@ -871,7 +977,9 @@ intrusive_adapter!(ByAddressAdapter = UnsafeRef<FreeBlock>:
                             FreeBlock { by_address: RBTreeLink });
 impl<'a> KeyAdapter<'a> for ByAddressAdapter {
     type Key = *const FreeBlock;
-    fn get_key(&self, x: &'a FreeBlock) -> Self::Key { x as *const FreeBlock }
+    fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
+        x as *const FreeBlock
+    }
 }
 intrusive_adapter!(BySizeAddressAdapter = UnsafeRef<FreeBlock>:
                             FreeBlock { by_size_address: RBTreeLink });
@@ -884,4 +992,3 @@ impl<'a> KeyAdapter<'a> for BySizeAddressAdapter {
 
 #[cfg(test)]
 mod tests;
-

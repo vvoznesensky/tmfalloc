@@ -1,0 +1,3 @@
+max_width = 80
+overflow_delimited_expr = true
+use_small_heuristics = "Max"
