@@ -3,7 +3,7 @@ use checked_int_cast::CheckedIntCast;
 use errno;
 use windows_sys::{
     Handle,
-    Win32::{Foundation, Storage::FileSystem, System::Memory},
+    Win32::{Foundation, Storage::FileSystem, System::Memory, System::IO},
 };
 
 pub type File = Handle;
@@ -105,19 +105,30 @@ pub fn mprotect_w(a: *mut Void, s: usize) {
 }
 
 // Making log file ready for the next transaction.
-pub fn truncate(lfd: File) {
-    panic_syserr!(libc::ftruncate(lfd, 0));
-    panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_SET));
+pub fn truncate(f: File) {
+    panic_syserr_invalid!(
+        FileSystem::SetFilePointer(f, 0, None, FileSystem::FILE_BEGIN),
+        FileSystem::INVALID_SET_FILE_POINTER
+    );
+    panic_syserr!(FileSystem::SetEndOfFile(f));
 }
 
 pub fn enlarge(fd: File, offset: usize) {
-    panic_syserr!(libc::ftruncate(fd, offset as libc::off_t));
+    panic_syserr!(FileSystem::SetFilePointerEx(
+        f, 
+        offset as i64,
+        None,
+        FileSystem::FILE_BEGIN),
+    );
+    panic_syserr!(FileSystem::SetEndOfFile(f));
 }
 
 // Check if the log file is not empty.
 // Remember, the log file offset must be at the end of file.
-pub fn not_empty(lfd: File) -> bool {
-    panic_syserr!(libc::lseek(lfd, 0, libc::SEEK_END)) > 0
+pub fn not_empty(f: File) -> bool {
+    let lpfs: i64;
+    panic_syserr!(FileSystem::GetFileSizeEx(f, &mut lpfs));
+    lpfs > 0
 }
 
 // File sync
@@ -125,15 +136,22 @@ pub fn sync(lfd: File) {
     panic_syserr!(FileSystem::FlushFileBuffers(lfd));
 }
 
+fn flock(fd: File, fl: FileSystem::LOCK_FILE_FLAGS) {
+    panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, 1, 0, XXX));
+}
+
 // Flock the main file.
 pub fn flock_w(fd: File) {
-    panic_syserr!(libc::flock(fd, libc::LOCK_EX));
+    flock(fd, FileSystem::LOCKFILE_EXCLUSIVE_LOCK);
 }
 pub fn flock_r(fd: File) {
-    panic_syserr!(libc::flock(fd, libc::LOCK_SH));
+    flock(fd, 0);
 }
 pub fn unflock(fd: File) {
-    panic_syserr!(libc::flock(fd, libc::LOCK_UN));
+    let ol: IO::OVERLAPPED;
+    ol.hEvent = 0;
+    panic_syserr!(FileSystem::UnlockFileEx(fd, 0, 0, 1, 0, &mut ol));
+    XXX
 }
 
 // Sigaction stuff: signal handler, install/remove it on crate load/remove.
