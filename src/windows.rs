@@ -79,14 +79,48 @@ pub fn seek_begin(f: File) {
     );
 }
 
-pub fn mmap(f: File, a: *mut Void, size: usize) -> std::io::Result<*mut Void> {
-    let mfn = if a.is_null() { 0 } else { libc::MAP_FIXED_NOREPLACE };
-    let fl = libc::MAP_SHARED | mfn;
-    result!(libc::mmap(a, size, libc::PROT_READ, fl, f, 0))
+// MapHolder: RAII fixture to handle file memory mapping.
+#[derive(Debug)]
+pub struct MapHolder {
+    pub arena: *mut Void,
+    pub size: usize,
+    file_mapping: Foundation::HANDLE,
+    mapped_view: Memory::MEMORYMAPPEDVIEW_HANDLE,
 }
 
-pub fn munmap(a: *mut Void, s: usize) {
-    panic_syserr!(libc::munmap(a, s));
+impl MapHolder {
+    pub fn new(
+        f: File,
+        a: *mut Void,
+        size: usize,
+    ) -> std::io::Result<MapHolder> {
+        #[cfg(target_pointer_width = "32")]
+        let (hi, lo) = (0, size as u32);
+        #[cfg(target_pointer_width = "64")]
+        let (hi, lo) = ((size >> 32) as u32, size as u32);
+        const MPRW: Memory::PAGE_PROTECTION_FLAGS = Memory::PAGE_READWRITE;
+        let fm = result!(Memory::CreateFileMappingA(f, None, MPRW, hi, lo, a))?;
+        match Memory::MapViewOfFileEx(fm, Memory::FILE_MAP_READ, 0, 0, size, a)
+        {
+            0 => {
+                panic_syserr!(Foundation::CloseHandle(fm));
+                Err(std::io::Error::last_os_error())
+            }
+            mv => Ok(MapHolder {
+                arena: mv as *mut Void,
+                size,
+                file_mapping: fm,
+                mapped_view: mv,
+            }),
+        }
+    }
+}
+
+impl Drop for MapHolder {
+    fn drop(&mut self) {
+        panic_syserr!(Memory::UnmapViewOfFile(self.mapped_view));
+        panic_syserr!(Foundation::CloseHandle(self.file_mapping));
+    }
 }
 
 pub fn mprotect_rw(a: *mut Void, s: usize) {
@@ -115,11 +149,11 @@ pub fn truncate(f: File) {
 
 pub fn enlarge(fd: File, offset: usize) {
     panic_syserr!(FileSystem::SetFilePointerEx(
-        f, 
+        f,
         offset as i64,
         None,
-        FileSystem::FILE_BEGIN),
-    );
+        FileSystem::FILE_BEGIN
+    ),);
     panic_syserr!(FileSystem::SetEndOfFile(f));
 }
 

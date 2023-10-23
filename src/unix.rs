@@ -64,14 +64,32 @@ pub fn seek_begin(f: File) {
     panic_syserr!(libc::lseek(f, 0, libc::SEEK_SET));
 }
 
-pub fn mmap(f: File, a: *mut Void, size: usize) -> std::io::Result<*mut Void> {
-    let mfn = if a.is_null() { 0 } else { libc::MAP_FIXED_NOREPLACE };
-    let fl = libc::MAP_SHARED | mfn;
-    result!(libc::mmap(a, size, libc::PROT_READ, fl, f, 0))
+// MapHolder: RAII fixture to handle file memory mapping.
+#[derive(Debug)]
+pub struct MapHolder {
+    pub arena: *mut Void,
+    pub size: usize,
 }
 
-pub fn munmap(a: *mut Void, s: usize) {
-    panic_syserr!(libc::munmap(a, s));
+impl MapHolder {
+    pub fn new(
+        f: File,
+        a: *mut Void,
+        size: usize,
+    ) -> std::io::Result<MapHolder> {
+        let mfn = if a.is_null() { 0 } else { libc::MAP_FIXED_NOREPLACE };
+        let fl = libc::MAP_SHARED | mfn;
+        Ok(MapHolder {
+            arena: result!(libc::mmap(a, size, libc::PROT_READ, fl, f, 0))?,
+            size,
+        })
+    }
+}
+
+impl Drop for MapHolder {
+    fn drop(&mut self) {
+        panic_syserr!(libc::munmap(self.arena, self.size));
+    }
 }
 
 pub fn mprotect_rw(a: *mut Void, s: usize) {

@@ -282,6 +282,7 @@ use checked_int_cast::CheckedIntCast;
 #[cfg_attr(unix, path = "unix.rs")]
 #[cfg_attr(windows, path = "windows.rs")]
 mod os;
+pub use os::MapHolder;
 
 ////////////////////////////////////////////////////////////////////////////////
 // FileHolder: RAII fixture to handle raw files
@@ -314,21 +315,6 @@ impl ops::Deref for FileHolder {
 impl Drop for FileHolder {
     fn drop(&mut self) {
         os::close(self.0);
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// MapHolder: RAII fixture to handle file memory mapping
-#[derive(Debug)]
-struct MapHolder(*mut os::Void, usize);
-impl MapHolder {
-    fn new(f: os::File, a: *mut os::Void, s: usize) -> std::io::Result<Self> {
-        Ok(Self(os::mmap(f, a, s)?, s))
-    }
-}
-impl Drop for MapHolder {
-    fn drop(&mut self) {
-        os::munmap(self.0, self.1)
     }
 }
 
@@ -433,7 +419,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
             },
         } as *mut os::Void;
         let addr = MapHolder::new(*fd, aa, arena_size)?;
-        let shown = addr.0 as usize;
+        let shown = addr.arena as usize;
         let arena = Arena {
             mem: addr,
             fd,
@@ -460,8 +446,8 @@ impl<'a, Root: 'a> Holder<'a, Root> {
                     rollback::<false>(
                         *guard.fd,
                         *guard.log_fd,
-                        guard.mem.0,
-                        guard.mem.1,
+                        guard.mem.arena,
+                        guard.mem.size,
                     );
                     os::flock_r(*guard.fd);
                 }
@@ -479,7 +465,12 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     ) -> InternalWriter<Root, PAGES_WRITABLE> {
         let guard = self.arena.write().unwrap();
         os::flock_w(*guard.fd);
-        rollback::<false>(*guard.fd, *guard.log_fd, guard.mem.0, guard.mem.1);
+        rollback::<false>(
+            *guard.fd,
+            *guard.log_fd,
+            guard.mem.arena,
+            guard.mem.size,
+        );
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
             guard,
             phantom: marker::PhantomData,
@@ -495,12 +486,12 @@ impl<'a, Root: 'a> Holder<'a, Root> {
 
     /// Returns the numeric address of the arena space beginning
     pub fn address(&self) -> usize {
-        self.arena.read().unwrap().mem.0 as usize
+        self.arena.read().unwrap().mem.arena as usize
     }
 
     /// Returns the size of the arena address space
     pub fn size(&self) -> usize {
-        self.arena.read().unwrap().mem.1 as usize
+        self.arena.read().unwrap().mem.size as usize
     }
 }
 
@@ -580,8 +571,8 @@ impl<Root, const PAGES_WRITABLE: bool>
 {
     fn setseg(&self) {
         let g = &self.guard;
-        let s = g.mem.1;
-        let b = g.mem.0 as *const os::Void;
+        let s = g.mem.size;
+        let b = g.mem.arena as *const os::Void;
         let e = unsafe { b.byte_add(s) };
         MEM_MAP.with_borrow_mut(|mb| {
             let mut c = mb.upper_bound(ops::Bound::Included(&b));
@@ -603,11 +594,11 @@ impl<Root, const PAGES_WRITABLE: bool>
 
     fn remseg(&self) {
         let g = &self.guard;
-        let b = g.mem.0 as *const os::Void;
+        let b = g.mem.arena as *const os::Void;
         MEM_MAP.with_borrow_mut(|mb| {
             let r = mb.remove(&b).unwrap();
             assert_eq!(r, ThreadArena {
-                size: g.mem.1,
+                size: g.mem.size,
                 odb_fd: *g.fd,
                 log_fd: *g.log_fd,
                 page_size: g.page_size
@@ -772,7 +763,7 @@ fn grow_up_free_block<Root>(
     };
     ph.size = size;
     let wg = &w.guard;
-    commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
+    commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size);
 }
 fn initialize_header<Root>(
     addr: usize,
@@ -805,7 +796,7 @@ fn initialize_header<Root>(
     });
     ptr.root = ManuallyDrop::new(new_root(w.allocator()));
     let wg = &w.guard;
-    commit(*wg.fd, *wg.log_fd, wg.mem.0, wg.mem.1);
+    commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size);
 }
 const FILETYPE: [u8; 8] = const_str::to_byte_array!(b"TMFALLOC");
 const V: &str = env!("CARGO_PKG_VERSION_MAJOR");
@@ -859,7 +850,7 @@ pub struct Reader<'a, Root> {
 impl<Root> ops::Deref for Reader<'_, Root> {
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe { (self.guard.mem.0 as *const Header<Root>).as_ref() }
+        &unsafe { (self.guard.mem.arena as *const Header<Root>).as_ref() }
             .unwrap()
             .root
     }
@@ -893,16 +884,16 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
     /// [InternalWriter::drop] method.
     pub fn rollback(&self) {
         let g = &self.guard;
-        rollback::<PAGES_WRITABLE>(*g.fd, *g.log_fd, g.mem.0, g.mem.1);
+        rollback::<PAGES_WRITABLE>(*g.fd, *g.log_fd, g.mem.arena, g.mem.size);
     }
     /// Commit the current transaction. Call to save the data.
     pub fn commit(&self) {
         let g = &self.guard;
-        commit(*g.fd, *g.log_fd, g.mem.0, g.mem.1);
+        commit(*g.fd, *g.log_fd, g.mem.arena, g.mem.size);
     }
     /// Create allocator to use in collections and containers.
     pub fn allocator(&self) -> Allocator {
-        Allocator { address: self.guard.mem.0 as usize }
+        Allocator { address: self.guard.mem.arena as usize }
     }
 }
 impl<Root, const PAGES_WRITABLE: bool> ops::Deref
@@ -910,7 +901,7 @@ impl<Root, const PAGES_WRITABLE: bool> ops::Deref
 {
     type Target = Root;
     fn deref(&self) -> &Root {
-        &unsafe { (self.guard.mem.0 as *const Header<Root>).as_ref() }
+        &unsafe { (self.guard.mem.arena as *const Header<Root>).as_ref() }
             .unwrap()
             .root
     }
@@ -919,7 +910,7 @@ impl<Root, const PAGES_WRITABLE: bool> ops::DerefMut
     for InternalWriter<'_, Root, PAGES_WRITABLE>
 {
     fn deref_mut(&mut self) -> &mut Root {
-        &mut unsafe { (self.guard.mem.0 as *mut Header<Root>).as_mut() }
+        &mut unsafe { (self.guard.mem.arena as *mut Header<Root>).as_mut() }
             .unwrap()
             .root
     }
@@ -929,7 +920,7 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
 {
     fn drop(&mut self) {
         let a = &self.guard;
-        rollback::<PAGES_WRITABLE>(*a.fd, *a.log_fd, a.mem.0, a.mem.1);
+        rollback::<PAGES_WRITABLE>(*a.fd, *a.log_fd, a.mem.arena, a.mem.size);
         self.remseg();
         os::unflock(*a.fd);
     }
