@@ -170,22 +170,17 @@ pub fn sync(lfd: File) {
     panic_syserr!(FileSystem::FlushFileBuffers(lfd));
 }
 
-fn flock(fd: File, fl: FileSystem::LOCK_FILE_FLAGS) {
-    panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, 1, 0, XXX));
-}
-
 // Flock the main file.
 pub fn flock_w(fd: File) {
-    flock(fd, FileSystem::LOCKFILE_EXCLUSIVE_LOCK);
+    panic_syserr!(FileSystem::LockFile(fd, 0, 0, 1, 0));
 }
 pub fn flock_r(fd: File) {
+    panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, 1, 0, XXX));
     flock(fd, 0);
+    flock(fd, FileSystem::LOCKFILE_EXCLUSIVE_LOCK);
 }
 pub fn unflock(fd: File) {
-    let ol: IO::OVERLAPPED;
-    ol.hEvent = 0;
-    panic_syserr!(FileSystem::UnlockFileEx(fd, 0, 0, 1, 0, &mut ol));
-    XXX
+    panic_syserr!(FileSystem::UnlockFile(fd, 0, 0, 1, 0));
 }
 
 // Sigaction stuff: signal handler, install/remove it on crate load/remove.
