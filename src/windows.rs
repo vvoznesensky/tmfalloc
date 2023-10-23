@@ -3,8 +3,12 @@ use checked_int_cast::CheckedIntCast;
 use errno;
 use windows_sys::{
     Handle,
-    Win32::{Foundation, Storage::FileSystem, System::Memory, System::IO,
-        System::SystemServices::MAXDWORD},
+    Win32::{
+        Foundation,
+        Storage::FileSystem,
+        System::{Diagnostics::Debug, Memory, SystemServices::MAXDWORD, IO},
+        System::Kernel,
+    },
 };
 
 pub type File = Handle;
@@ -176,7 +180,12 @@ pub fn flock_w(fd: File) {
     panic_syserr!(FileSystem::LockFile(fd, 0, 0, MAXDWORD, MAXDWORD));
 }
 pub fn flock_r(fd: File) {
-    let o = FileSystem::OVERLAPPED { 0, 0, None, 0 };
+    let o = FileSystem::OVERLAPPED {
+        Internal: 0,
+        InternalHigh: 0,
+        Anonymous: None,
+        hEvent: 0,
+    };
     let fl = FileSystem::LOCKFILE_EXCLUSIVE_LOCK;
     panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, MAXDWORD, MAXDWORD, &o));
 }
@@ -184,68 +193,51 @@ pub fn unflock(fd: File) {
     panic_syserr!(FileSystem::UnlockFile(fd, 0, 0, MAXDWORD, MAXDWORD));
 }
 
-// Sigaction stuff: signal handler, install/remove it on crate load/remove.
-static mut OLDACTSEGV: Option<SigAction> = None;
-static mut OLDACTBUS: Option<SigAction> = None;
+// Top level exception filter: install/remove it on crate load/remove.
+static mut OLDFILTER: LPTOP_LEVEL_EXCEPTION_FILTER = None;
 
-extern "C" fn sighandler(
-    signum: c_int,
-    info: *mut libc::siginfo_t,
-    ucontext: *mut c_void,
-) {
-    let addr = unsafe { info.as_ref().unwrap().si_addr() } as *const Void;
-    let extend = signum == libc::SIGBUS;
-    if unsafe { MEMORY_VIOLATION_HANDLER.unwrap()(addr, extend) } {
-        return;
+fn er_to_addr(er: Debug::ExceptionRecord) -> *const Void {
+    assert_eq!(er.ExceptionRecord, None);
+    er.ExceptionInformation[1] as *const Void;
+}
+
+unsafe extern "system" fn filter(
+    info: *const Debug::EXCEPTION_POINTERS,
+) -> i32 {
+    let er = info.as_ref().unwrap().ExceptionRecord;
+    let ok = match er.ExceptionCode {
+        Foundation::EXCEPTION_IN_PAGE_ERROR => {
+            let addr = er_to_addr();
+            unsafe { MEMORY_VIOLATION_HANDLER.unwrap()(addr, true) }
+        },
+        Foundation::EXCEPTION_ACCESS_VIOLATION => {
+            let addr = er_to_addr();
+            unsafe { MEMORY_VIOLATION_HANDLER.unwrap()(addr, false) }
+        },
+        _ => false
     };
-    let oa = if signum == libc::SIGSEGV {
-        unsafe { OLDACTSEGV.unwrap() }
-    } else {
-        assert_eq!(signum, libc::SIGBUS);
-        unsafe { OLDACTBUS.unwrap() }
-    };
-    if !oa.mask().contains(Signal::try_from(signum).unwrap()) {
-        match oa.handler() {
-            SigHandler::SigDfl => {
-                panic_syserr!(libc::kill(libc::getpid(), libc::SIGABRT));
-            }
-            SigHandler::SigIgn => (),
-            SigHandler::Handler(f) => f(signum),
-            SigHandler::SigAction(f) => f(signum, info, ucontext),
-        }
-    }
+    if ok { Kernel::ExceptionContinueExecution }
+    else { unsafe { OLDFILTER.unwrap_or_else(|info| {})(info) } }
 }
 
 pub type MemoryViolationHandler = fn(addr: *const Void, extend: bool) -> bool;
 static mut MEMORY_VIOLATION_HANDLER: Option<MemoryViolationHandler> = None;
 
 pub unsafe fn initialize_memory_violation_handler(h: MemoryViolationHandler) {
-    assert_eq!(unsafe { OLDACTSEGV }, None);
-    assert_eq!(unsafe { OLDACTBUS }, None);
-    let act = SigAction::new(
-        SigHandler::SigAction(sighandler),
-        SaFlags::SA_RESTART.union(SaFlags::SA_SIGINFO),
-        SigSet::empty(),
-    );
+    assert_eq!(unsafe { OLDFILTER }, None);
+    let old = Debug::SetUnhandledExceptionFilter(Some(filter));
     unsafe {
         MEMORY_VIOLATION_HANDLER = Some(h);
     }
     unsafe {
-        OLDACTBUS = Some(sigaction(Signal::SIGBUS, &act).unwrap());
-    }
-    unsafe {
-        OLDACTSEGV = Some(sigaction(Signal::SIGSEGV, &act).unwrap());
-    }
-}
-
-fn finalise_sig(s: Signal, osa: &mut Option<SigAction>) {
-    unsafe {
-        sigaction(s, &osa.unwrap()).unwrap();
-        *osa = None;
+        OLDFILTER = old;
     }
 }
 
 pub unsafe fn finalize_memory_violation_handler() {
-    finalise_sig(Signal::SIGSEGV, &mut unsafe { OLDACTSEGV });
-    finalise_sig(Signal::SIGBUS, &mut unsafe { OLDACTBUS });
+    let old = unsafe { OLDFILTER };
+    let my = Debug::SetUnhandledExceptionFilter(old);
+    unsafe {
+        OLDFILTER = None;
+    }
 }
