@@ -3,7 +3,8 @@ use checked_int_cast::CheckedIntCast;
 use errno;
 use windows_sys::{
     Handle,
-    Win32::{Foundation, Storage::FileSystem, System::Memory, System::IO},
+    Win32::{Foundation, Storage::FileSystem, System::Memory, System::IO,
+        System::SystemServices::MAXDWORD},
 };
 
 pub type File = Handle;
@@ -172,15 +173,15 @@ pub fn sync(lfd: File) {
 
 // Flock the main file.
 pub fn flock_w(fd: File) {
-    panic_syserr!(FileSystem::LockFile(fd, 0, 0, 1, 0));
+    panic_syserr!(FileSystem::LockFile(fd, 0, 0, MAXDWORD, MAXDWORD));
 }
 pub fn flock_r(fd: File) {
-    panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, 1, 0, XXX));
-    flock(fd, 0);
-    flock(fd, FileSystem::LOCKFILE_EXCLUSIVE_LOCK);
+    let o = FileSystem::OVERLAPPED { 0, 0, None, 0 };
+    let fl = FileSystem::LOCKFILE_EXCLUSIVE_LOCK;
+    panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, MAXDWORD, MAXDWORD, &o));
 }
 pub fn unflock(fd: File) {
-    panic_syserr!(FileSystem::UnlockFile(fd, 0, 0, 1, 0));
+    panic_syserr!(FileSystem::UnlockFile(fd, 0, 0, MAXDWORD, MAXDWORD));
 }
 
 // Sigaction stuff: signal handler, install/remove it on crate load/remove.
