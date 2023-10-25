@@ -1,7 +1,7 @@
 use super::*;
 use indoc;
-use std::vec::Vec;
 use std::process::Command;
+use std::vec::Vec;
 use test_binary::build_test_binary;
 
 #[test]
@@ -43,17 +43,18 @@ fn read_recovery() {
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
     let h = Holder::<u64>::new(
-                "test_read_recovery",
-                None,
-                MI,
-                0xfedcba9876543210,
-                |_| 0,
-            )
-            .unwrap();
+        "test_read_recovery",
+        None,
+        MI,
+        0xfedcba9876543210,
+        |_| 0,
+    )
+    .unwrap();
     let test_bin_path = build_test_binary("suicider", "testbins")
-                                        .expect("error building test binary");
-    let output = Command::new(test_bin_path).output().
-        expect("failed to execute test binary");
+        .expect("error building test binary");
+    let output = Command::new(test_bin_path)
+        .output()
+        .expect("failed to execute test binary");
     assert_eq!(output.stdout, b"w: 1\n");
     assert_eq!(*h.read(), 0);
     let _ = std::fs::remove_file("test_read_recovery.odb");

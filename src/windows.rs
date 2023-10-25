@@ -6,8 +6,8 @@ use windows_sys::{
     Win32::{
         Foundation,
         Storage::FileSystem,
-        System::{Diagnostics::Debug, Memory, SystemServices::MAXDWORD, IO},
         System::Kernel,
+        System::{Diagnostics::Debug, Memory, SystemServices::MAXDWORD, IO},
     },
 };
 
@@ -209,15 +209,18 @@ unsafe extern "system" fn filter(
         Foundation::EXCEPTION_IN_PAGE_ERROR => {
             let addr = er_to_addr();
             unsafe { MEMORY_VIOLATION_HANDLER.unwrap()(addr, true) }
-        },
+        }
         Foundation::EXCEPTION_ACCESS_VIOLATION => {
             let addr = er_to_addr();
             unsafe { MEMORY_VIOLATION_HANDLER.unwrap()(addr, false) }
-        },
-        _ => false
+        }
+        _ => false,
     };
-    if ok { Kernel::ExceptionContinueExecution }
-    else { unsafe { OLDFILTER.unwrap_or_else(|info| {})(info) } }
+    if ok {
+        Kernel::ExceptionContinueExecution
+    } else {
+        unsafe { OLDFILTER.unwrap_or_else(|info| {})(info) }
+    }
 }
 
 pub type MemoryViolationHandler = fn(addr: *const Void, extend: bool) -> bool;
