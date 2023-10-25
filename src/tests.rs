@@ -1,10 +1,8 @@
 use super::*;
-use fork;
 use indoc;
-use nix;
-use os_pipe;
-use std::io::{Read, Write};
 use std::vec::Vec;
+use std::process::Command;
+use test_binary::build_test_binary;
 
 #[test]
 fn page_boundary() {
@@ -44,11 +42,7 @@ fn page_boundary() {
 fn read_recovery() {
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
-    let (mut reader_child, mut writer_parent) = os_pipe::pipe().unwrap();
-    let (mut reader_parent, mut writer_child) = os_pipe::pipe().unwrap();
-    match fork::fork() {
-        Ok(fork::Fork::Parent(_)) => {
-            let h = Holder::<u64>::new(
+    let h = Holder::<u64>::new(
                 "test_read_recovery",
                 None,
                 MI,
@@ -56,35 +50,12 @@ fn read_recovery() {
                 |_| 0,
             )
             .unwrap();
-            writer_parent.write_all(b"1").unwrap();
-            let mut b: [u8; 1] = [b'0'];
-            assert_eq!(reader_parent.read(&mut b).unwrap(), 1);
-            assert_eq!(&b, b"1");
-            assert_eq!(*h.read(), 0);
-        }
-        Ok(fork::Fork::Child) => {
-            let mut b: [u8; 1] = [b'0'];
-            assert_eq!(reader_child.read(&mut b).unwrap(), 1);
-            assert_eq!(&b, b"1");
-            let mut h = Holder::<u64>::new(
-                "test_read_recovery",
-                None,
-                MI,
-                0xfedcba9876543210,
-                |_| panic!("Impossible!"),
-            )
-            .unwrap();
-            let mut w = h.write();
-            *w = 1;
-            writer_child.write_all(b"1").unwrap();
-            nix::sys::signal::kill(
-                nix::unistd::getpid(),
-                Some(nix::sys::signal::Signal::SIGKILL),
-            )
-            .unwrap();
-        }
-        Err(_) => panic!("Cannot spawn child process"),
-    }
+    let test_bin_path = build_test_binary("suicider", "testbins")
+                                        .expect("error building test binary");
+    let output = Command::new(test_bin_path).output().
+        expect("failed to execute test binary");
+    assert_eq!(output.stdout, b"w: 1\n");
+    assert_eq!(*h.read(), 0);
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
 }

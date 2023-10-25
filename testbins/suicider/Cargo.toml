@@ -1,0 +1,14 @@
+[package]                                                                                          
+name = "suicider"
+version = "0.1.3"
+edition = "2021"
+description = "Part of the tmfalloc crate"
+authors = ["Vladimir Voznesenskiy <vvoznesensky@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vvoznesensky/tmfalloc"
+
+[workspace]
+name = "test-suicide"
+
+[dependencies]
+tmfalloc = { path = "../.." }

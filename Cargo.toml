@@ -1,7 +1,7 @@
 [package]
 name = "tmfalloc"
-version = "0.1.2"
-authors = ["Vladimir Voznesenskiy <vvoznesensky@yandex.ru>"]
+version = "0.1.3"
+authors = ["Vladimir Voznesenskiy <vvoznesensky@gmail.com>"]
 edition = "2021"
 rust-version = "1.74"
 description = "Transactional memory-mapped file allocator"
@@ -17,10 +17,9 @@ ctor = "0.2"
 errno = "0.3"
 const-str = "0.5"
 intrusive-collections = "0.9"
-fork = "0.1"
-os_pipe = "1.1"
 indoc = "2.0"
 checked_int_cast = "1.0"
+test-binary = "3.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = "0.42"
