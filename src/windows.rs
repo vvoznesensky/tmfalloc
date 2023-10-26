@@ -193,7 +193,7 @@ pub fn flock_r(fd: File) {
         Anonymous: IO::OVERLAPPED_0 { Pointer: ptr::null_mut() },
         hEvent: Foundation::HANDLE(0),
     };
-    let fl = FileSystem::LOCKFILE_EXCLUSIVE_LOCK;
+    let fl = FileSystem::LOCK_FILE_FLAGS(0);
     let m = MAXDWORD;
     panic_syserr!(FileSystem::LockFileEx(fd, fl, 0, m, m, &mut o));
 }

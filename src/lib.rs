@@ -463,11 +463,11 @@ impl<'a, Root: 'a> Holder<'a, Root> {
             phantom: marker::PhantomData,
         }
     }
-    fn internal_write<const PAGES_WRITABLE: bool>(
+    fn internal_write<const PAGES_WRITABLE_FILE_NOT_LOCKED: bool>(
         &self,
-    ) -> InternalWriter<Root, PAGES_WRITABLE> {
+    ) -> InternalWriter<Root, PAGES_WRITABLE_FILE_NOT_LOCKED> {
         let guard = self.arena.write().unwrap();
-        os::flock_w(*guard.fd);
+        if PAGES_WRITABLE_FILE_NOT_LOCKED { os::flock_w(*guard.fd); }
         unsafe {
             rollback::<false>(
                 *guard.fd,
@@ -476,7 +476,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
                 guard.mem.size,
             )
         };
-        let rv = InternalWriter::<Root, PAGES_WRITABLE> {
+        let rv = InternalWriter::<Root, PAGES_WRITABLE_FILE_NOT_LOCKED> {
             guard,
             phantom: marker::PhantomData,
         };
