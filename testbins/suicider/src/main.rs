@@ -1,7 +1,7 @@
-use std::process;
-use tmfalloc::{MI, Holder};
 use std::io;
 use std::io::Write;
+use std::process;
+use tmfalloc::{Holder, MI};
 
 fn main() {
     let mut h = Holder::<u64>::new(
@@ -18,4 +18,3 @@ fn main() {
     io::stdout().flush().unwrap();
     process::abort();
 }
-

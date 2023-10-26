@@ -203,18 +203,20 @@
 //! # let _ = std::fs::remove_file("test7.log");
 //! # #[cfg(target_pointer_width = "64")]
 //! # const ADDRESS: usize = 0x70ffe6700000;
+//! # const SIZE = 512 * tmfalloc::GI;
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6700000;
+//! # const SIZE = 512 * tmfalloc::MI;
 //! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
 //! let mut h = tmfalloc::Holder::<V>::new("test7", Some(ADDRESS),
-//!           tmfalloc::MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
+//!           SIZE, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(&[b'.'; tmfalloc::MI - 2 * tmfalloc::KI]);
 //! w.commit();
 //! drop(w);
 //! drop(h);
 //! let mut h = tmfalloc::Holder::<V>::new("test7", None, 2 *
-//!             tmfalloc::MI, 0xfedcba9876543210, |a| { panic!("!") }).unwrap();
+//!             SIZE, 0xfedcba9876543210, |a| { panic!("!") }).unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(&[b'.'; tmfalloc::MI]);
 //! w.commit();
@@ -223,7 +225,7 @@
 //! w.commit();
 //! drop(w);
 //! drop(h);
-//! match tmfalloc::Holder::<V>::new("test7", None, tmfalloc::MI,
+//! match tmfalloc::Holder::<V>::new("test7", None, SIZE,
 //!             0xfedcba9876543210, |a| { panic!("!") }).unwrap_err() {
 //!     tmfalloc::Error::WrongSize => {},
 //!     _ => panic!("Wrong type of error")
@@ -278,7 +280,6 @@ use std::ops;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub mod allocator;
 pub use allocator::Allocator;
-use checked_int_cast::CheckedIntCast;
 #[cfg_attr(unix, path = "unix.rs")]
 #[cfg_attr(windows, path = "windows.rs")]
 mod os;
@@ -394,7 +395,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         magick: u64,
         new_root: fn(Allocator) -> Root,
     ) -> Result<Self> {
-        let ps = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+        let ps = os::page_size();
         assert!(ps > 0);
         let page_size = ps as usize;
         assert!(page_size.is_power_of_two());
@@ -443,12 +444,14 @@ impl<'a, Root: 'a> Holder<'a, Root> {
                 if os::not_empty(*guard.log_fd) {
                     os::unflock(*guard.fd);
                     os::flock_w(*guard.fd);
-                    rollback::<false>(
-                        *guard.fd,
-                        *guard.log_fd,
-                        guard.mem.arena,
-                        guard.mem.size,
-                    );
+                    unsafe {
+                        rollback::<false>(
+                            *guard.fd,
+                            *guard.log_fd,
+                            guard.mem.arena,
+                            guard.mem.size,
+                        )
+                    };
                     os::flock_r(*guard.fd);
                 }
             }
@@ -465,12 +468,14 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     ) -> InternalWriter<Root, PAGES_WRITABLE> {
         let guard = self.arena.write().unwrap();
         os::flock_w(*guard.fd);
-        rollback::<false>(
-            *guard.fd,
-            *guard.log_fd,
-            guard.mem.arena,
-            guard.mem.size,
-        );
+        unsafe {
+            rollback::<false>(
+                *guard.fd,
+                *guard.log_fd,
+                guard.mem.arena,
+                guard.mem.size,
+            )
+        };
         let rv = InternalWriter::<Root, PAGES_WRITABLE> {
             guard,
             phantom: marker::PhantomData,
@@ -495,15 +500,6 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     }
 }
 
-/* XXX Let it crash?!
-impl Drop for Arena {
-    fn drop(&mut self) {
-        flock_w(*self.fd);
-        rollback::<true>(*self.fd, *self.log_fd, self.mem.0, self.page_size);
-        unflock(*self.fd);
-    }
-}*/
-
 ////////////////////////////////////////////////////////////////////////////////
 // Very internal functions that does not know about Arena structure, but
 // only manipulates file descriptors/handlers and mapped memory.
@@ -512,7 +508,7 @@ impl Drop for Arena {
 // Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
 // access of mem for this thread among threads that have access to this fd.
 // For further use in Holder and Writer.
-fn rollback<const PAGES_WRITABLE: bool>(
+unsafe fn rollback<const PAGES_WRITABLE: bool>(
     fd: os::File,
     lfd: os::File,
     mem: *mut os::Void,
@@ -523,9 +519,9 @@ fn rollback<const PAGES_WRITABLE: bool>(
     let pgn_ptr = (&mut page_no as *mut u32) as *mut os::Void;
     while read_exactly(lfd, pgn_ptr, 4) == 4 {
         let offset = (page_no as usize) * page_size;
-        let addr = unsafe { mem.byte_add(offset) };
+        let addr = mem.byte_add(offset);
         if !PAGES_WRITABLE {
-            os::mprotect_w(addr, page_size);
+            os::mprotect_rw(addr, page_size);
         }
         read_exactly(lfd, addr, page_size);
         os::mprotect_r(addr, page_size);
@@ -538,7 +534,7 @@ fn rollback<const PAGES_WRITABLE: bool>(
 // Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
 // access of mem for this thread among threads that have access to this fd.
 // For further use in WriterAccessor.
-fn commit(fd: os::File, lfd: os::File, mem: *mut os::Void, size: usize) {
+unsafe fn commit(fd: os::File, lfd: os::File, mem: *mut os::Void, size: usize) {
     os::seek_begin(lfd);
     os::mprotect_r(mem, size);
     os::sync(fd);
@@ -546,16 +542,16 @@ fn commit(fd: os::File, lfd: os::File, mem: *mut os::Void, size: usize) {
 }
 
 // Read exactly count bytes or end from the file.
-fn read_exactly(
+unsafe fn read_exactly(
     lfd: os::File,
     buf: *mut os::Void,
-    count: libc::size_t,
+    count: usize,
 ) -> usize {
     let mut s: usize;
     let mut rval: usize = 0;
     let mut c = count;
     while c > 0 && {
-        s = unsafe { os::read(lfd, buf, c) };
+        s = os::read(lfd, buf, c);
         s != 0
     } {
         rval += s;
@@ -607,21 +603,20 @@ impl<Root, const PAGES_WRITABLE: bool>
     }
 }
 
-fn save_old_page(
+unsafe fn save_old_page(
     mem: *const os::Void,
     size: usize,
     log_fd: os::File,
     page_size: usize,
     addr: *const os::Void,
 ) {
-    let offs = unsafe { addr.byte_add(1) }.align_offset(page_size) as isize + 1;
-    let begin = unsafe { addr.byte_offset(offs - (page_size) as isize) };
+    let offs = addr.byte_add(1).align_offset(page_size) as isize + 1;
+    let begin = addr.byte_offset(offs - (page_size) as isize);
     assert_eq!(begin.align_offset(page_size), 0);
     assert!(begin >= mem);
-    let pn = unsafe { begin.byte_offset_from(mem) } / (page_size as isize);
+    let pn = begin.byte_offset_from(mem) / (page_size as isize);
     let page_no: u32 = u32::try_from(pn).unwrap();
     assert!(size / page_size > (page_no as usize));
-    // XXX use writev
     os::write_page(log_fd, page_no, begin, page_size);
     os::sync(log_fd);
     os::mprotect_rw(begin as *mut os::Void, page_size);
@@ -629,7 +624,7 @@ fn save_old_page(
 
 const EXTEND_BYTES: usize = 8;
 
-fn extend_file(
+unsafe fn extend_file(
     mem: *const os::Void,
     size: usize,
     odb_fd: os::File,
@@ -639,17 +634,20 @@ fn extend_file(
     let past_addr = unsafe { addr.byte_add(EXTEND_BYTES) };
     let offset = past_addr.align_offset(page_size);
     let e = unsafe { past_addr.byte_add(offset) };
-    let offset = unsafe { e.byte_offset_from(mem) };
-    assert!(usize::try_from(offset).unwrap() <= size);
-    os::enlarge(odb_fd, offset.as_usize_checked().unwrap());
+    let offset = usize::try_from(unsafe { e.byte_offset_from(mem) }).unwrap();
+    assert!(offset <= size);
+    os::enlarge(odb_fd, offset);
 }
 
 // Returns true if the violation was successfully handled.
-fn memory_violation_handler(addr: *const os::Void, extend: bool) -> bool {
+unsafe fn memory_violation_handler(
+    addr: *const os::Void,
+    extend: bool,
+) -> bool {
     MEM_MAP.with_borrow(|mb| {
         let c = mb.upper_bound(ops::Bound::Included(&addr));
         if let Some((l, ta)) = c.key_value() {
-            if addr < unsafe { l.byte_add(ta.size) } {
+            if addr < l.byte_add(ta.size) {
                 if extend {
                     extend_file(*l, ta.size, ta.odb_fd, ta.page_size, addr);
                 } else {
@@ -678,13 +676,13 @@ thread_local! {
 }
 
 #[ctor::ctor]
-fn initialise_sigs() {
-    unsafe { os::initialize_memory_violation_handler(memory_violation_handler) }
+unsafe fn initialise_sigs() {
+    os::initialize_memory_violation_handler(memory_violation_handler);
 }
 
 #[ctor::dtor]
-fn finalise_sigs() {
-    unsafe { os::finalize_memory_violation_handler() }
+unsafe fn finalise_sigs() {
+    os::finalize_memory_violation_handler();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -763,7 +761,7 @@ fn grow_up_free_block<Root>(
     };
     ph.size = size;
     let wg = &w.guard;
-    commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size);
+    unsafe { commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size) };
 }
 fn initialize_header<Root>(
     addr: usize,
@@ -796,7 +794,7 @@ fn initialize_header<Root>(
     });
     ptr.root = ManuallyDrop::new(new_root(w.allocator()));
     let wg = &w.guard;
-    commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size);
+    unsafe { commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size) };
 }
 const FILETYPE: [u8; 8] = const_str::to_byte_array!(b"TMFALLOC");
 const V: &str = env!("CARGO_PKG_VERSION_MAJOR");
@@ -884,12 +882,19 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
     /// [InternalWriter::drop] method.
     pub fn rollback(&self) {
         let g = &self.guard;
-        rollback::<PAGES_WRITABLE>(*g.fd, *g.log_fd, g.mem.arena, g.mem.size);
+        unsafe {
+            rollback::<PAGES_WRITABLE>(
+                *g.fd,
+                *g.log_fd,
+                g.mem.arena,
+                g.mem.size,
+            )
+        };
     }
     /// Commit the current transaction. Call to save the data.
     pub fn commit(&self) {
         let g = &self.guard;
-        commit(*g.fd, *g.log_fd, g.mem.arena, g.mem.size);
+        unsafe { commit(*g.fd, *g.log_fd, g.mem.arena, g.mem.size) };
     }
     /// Create allocator to use in collections and containers.
     pub fn allocator(&self) -> Allocator {
@@ -920,7 +925,14 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
 {
     fn drop(&mut self) {
         let a = &self.guard;
-        rollback::<PAGES_WRITABLE>(*a.fd, *a.log_fd, a.mem.arena, a.mem.size);
+        unsafe {
+            rollback::<PAGES_WRITABLE>(
+                *a.fd,
+                *a.log_fd,
+                a.mem.arena,
+                a.mem.size,
+            )
+        };
         self.remseg();
         os::unflock(*a.fd);
     }
@@ -944,8 +956,6 @@ struct FreeBlock {
     _padding: usize,
 }
 /// Common divisor of any allocation arena consumption in bytes.
-///
-/// 64 bytes on 64-bit architectures may seem to be too large.
 pub const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
 impl FreeBlock {
     fn initialize(h: &mut HeaderOfHeader, fbr: *const FreeBlock, size: usize) {

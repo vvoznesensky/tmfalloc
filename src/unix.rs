@@ -33,6 +33,10 @@ macro_rules! panic_syserr {
     }};
 }
 
+pub fn page_size() -> usize {
+    unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) }.as_usize_checked().unwrap()
+}
+
 pub fn open(pathname: &String) -> std::io::Result<File> {
     result!(libc::open(
         pathname.as_ptr() as *const i8,
@@ -45,13 +49,13 @@ pub unsafe fn read(f: File, buf: *mut Void, s: usize) -> usize {
     panic_syserr!(libc::read(f, buf, s))
 }
 
-pub fn write_page(f: File, page_no: u32, page: *const Void, page_size: usize) {
+pub unsafe fn write_page(f: File, pno: u32, page: *const Void, psize: usize) {
     let iovec = [
         libc::iovec {
-            iov_base: std::ptr::from_ref(&page_no) as *mut c_void,
+            iov_base: std::ptr::from_ref(&pno) as *mut c_void,
             iov_len: 4,
         },
-        libc::iovec { iov_base: page as *mut c_void, iov_len: page_size },
+        libc::iovec { iov_base: page as *mut c_void, iov_len: psize },
     ];
     panic_syserr!(libc::writev(f, iovec.as_ptr(), 2));
 }
@@ -92,16 +96,12 @@ impl Drop for MapHolder {
     }
 }
 
-pub fn mprotect_rw(a: *mut Void, s: usize) {
+pub unsafe fn mprotect_rw(a: *mut Void, s: usize) {
     panic_syserr!(libc::mprotect(a, s, libc::PROT_READ | libc::PROT_WRITE));
 }
 
-pub fn mprotect_r(a: *mut Void, s: usize) {
+pub unsafe fn mprotect_r(a: *mut Void, s: usize) {
     panic_syserr!(libc::mprotect(a, s, libc::PROT_READ));
-}
-
-pub fn mprotect_w(a: *mut Void, s: usize) {
-    panic_syserr!(libc::mprotect(a, s, libc::PROT_WRITE));
 }
 
 // Making log file ready for the next transaction.
