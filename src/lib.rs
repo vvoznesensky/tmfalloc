@@ -203,10 +203,12 @@
 //! # let _ = std::fs::remove_file("test7.log");
 //! # #[cfg(target_pointer_width = "64")]
 //! # const ADDRESS: usize = 0x70ffe6700000;
-//! # const SIZE = 512 * tmfalloc::GI;
+//! # #[cfg(target_pointer_width = "64")]
+//! # const SIZE: usize = 512 * tmfalloc::GI;
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6700000;
-//! # const SIZE = 512 * tmfalloc::MI;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const SIZE: usize = 512 * tmfalloc::MI;
 //! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
 //! let mut h = tmfalloc::Holder::<V>::new("test7", Some(ADDRESS),
 //!           SIZE, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();

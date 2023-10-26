@@ -34,7 +34,7 @@ macro_rules! panic_syserr {
 }
 
 pub fn page_size() -> usize {
-    unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) }.as_usize_checked().unwrap()
+    unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) }.try_into().unwrap()
 }
 
 pub fn open(pathname: &String) -> std::io::Result<File> {
@@ -168,7 +168,8 @@ extern "C" fn sighandler(
     }
 }
 
-pub type MemoryViolationHandler = fn(addr: *const Void, extend: bool) -> bool;
+pub type MemoryViolationHandler = unsafe fn(addr: *const Void, extend: bool)
+    -> bool;
 static mut MEMORY_VIOLATION_HANDLER: Option<MemoryViolationHandler> = None;
 
 pub unsafe fn initialize_memory_violation_handler(h: MemoryViolationHandler) {
