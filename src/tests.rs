@@ -1,4 +1,5 @@
 use super::*;
+use const_str;
 use indoc;
 use std::process::Command;
 use std::vec::Vec;
@@ -48,21 +49,34 @@ fn page_boundary() {
 fn read_recovery() {
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
-    let h = Holder::<u64>::new(
+    type V = Vec<i64, Allocator>;
+    let mut h = Holder::<V>::new(
         "test_read_recovery",
         None,
         MI,
         0xfedcba9876543210,
-        |_| 0,
+        |a| V::new_in(a.clone()),
     )
     .unwrap();
+    let mut w = h.write();
+    const VS: i64 = 120 * KI as i64;
+    let v: Vec<i64> = (0i64..VS).collect();
+    w.extend_from_slice(&v);
+    w.commit();
+    drop(w);
+
     let test_bin_path = build_test_binary("suicider", "testbins")
         .expect("error building test binary");
     let output = Command::new(test_bin_path)
         .output()
         .expect("failed to execute test binary");
-    assert_eq!(output.stdout, b"w: 1\n");
-    assert_eq!(*h.read(), 0);
+    eprintln!("{}", const_str::format!("w: {}\n", 1 - VS));
+    eprintln!("{}", String::from_utf8(output.stderr).unwrap());
+    assert_eq!(
+        output.stdout,
+        const_str::to_byte_array!(const_str::format!("w: {}\n", 1 - VS))
+    );
+    assert_eq!(*h.read(), v);
 
     drop(h);
     let _ = std::fs::remove_file("test_read_recovery.odb");

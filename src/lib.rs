@@ -460,7 +460,9 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         &self,
     ) -> InternalWriter<Root, PAGES_WRITABLE_FILE_NOT_LOCKED> {
         let guard = self.arena.write().unwrap();
-        if PAGES_WRITABLE_FILE_NOT_LOCKED { os::flock_w(*guard.fd); }
+        if PAGES_WRITABLE_FILE_NOT_LOCKED {
+            os::flock_w(*guard.fd);
+        }
         unsafe {
             rollback::<false>(
                 *guard.fd,

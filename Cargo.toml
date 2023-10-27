@@ -15,7 +15,7 @@ categories = ["caching", "database-implementations",
 [dependencies]
 ctor = "0.2"
 errno = "0.3"
-const-str = "0.5"
+const-str = { version = "0.5", features = ["proc"] }
 intrusive-collections = "0.9"
 
 [dev-dependencies]

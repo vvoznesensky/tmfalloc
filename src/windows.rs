@@ -5,8 +5,8 @@ use windows;
 use windows::Win32::{
     Foundation,
     Storage::FileSystem,
-    System::{Diagnostics::Debug, Memory, SystemServices::MAXDWORD, IO},
     System::SystemInformation,
+    System::{Diagnostics::Debug, Memory, SystemServices::MAXDWORD, IO},
 };
 
 pub type File = Foundation::HANDLE;
@@ -122,7 +122,9 @@ impl MapHolder {
         };
         eprintln!("MapHolder::new address real {:p}", m.Value);
         if m.Value.is_null() {
-            eprintln!("MapHolder::new {}", unsafe { Foundation::GetLastError().unwrap_err() } );
+            eprintln!("MapHolder::new {}", unsafe {
+                Foundation::GetLastError().unwrap_err()
+            });
             panic_syserr!(Foundation::CloseHandle(fm));
             let e = std::io::Error::last_os_error();
             if e.kind() == std::io::ErrorKind::Uncategorized {

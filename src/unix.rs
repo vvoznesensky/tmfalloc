@@ -168,8 +168,8 @@ extern "C" fn sighandler(
     }
 }
 
-pub type MemoryViolationHandler = unsafe fn(addr: *const Void, extend: bool)
-    -> bool;
+pub type MemoryViolationHandler =
+    unsafe fn(addr: *const Void, extend: bool) -> bool;
 static mut MEMORY_VIOLATION_HANDLER: Option<MemoryViolationHandler> = None;
 
 pub unsafe fn initialize_memory_violation_handler(h: MemoryViolationHandler) {
