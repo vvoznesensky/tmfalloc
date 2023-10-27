@@ -10,7 +10,6 @@ fn page_boundary() {
     let _ = std::fs::remove_file("test_page_boundary.odb");
     let _ = std::fs::remove_file("test_page_boundary.log");
     type V = Vec<u64, Allocator>;
-    eprintln!("000");
     let mut h = Holder::<V>::new(
         "test_page_boundary",
         None,
@@ -19,16 +18,13 @@ fn page_boundary() {
         |a| V::new_in(a),
     )
     .unwrap();
-    eprintln!("100");
     let mut w = h.write();
     const I: usize = 16 * KI;
     w.extend_from_slice(&[0u64; I]);
-    eprintln!("200");
     for i in 0..I * 8 - 7 {
         let a = unsafe { w.as_mut_ptr().byte_add(i).as_mut() }.unwrap();
         *a = !*a;
     }
-    eprintln!("300");
     w.commit();
     drop(w);
 
@@ -123,11 +119,9 @@ fn grow_and_shrink() {
     w.commit();
     w.tworoads.truncate(l2);
     w.tworoads.shrink_to_fit();
-    println!("{a1:p} {a2:p} {a1m:p}");
     w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n"); //30
     w.threelittlepigs.extend_from_slice(b"And I, I may tell you, a tale\n"); //60
     let a3 = w.threelittlepigs.as_ptr();
-    println!("{a1:p} {a2:p} {a3:p} {a1m:p}");
     assert_eq!(a3, a1);
     w.onegin.truncate(l1);
     w.onegin.shrink_to_fit();

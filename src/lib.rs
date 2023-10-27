@@ -2,7 +2,6 @@
 //!
 //! ## Storage initialization
 //! ```
-//! use windows::Win32::Foundation::GetLastError;
 //! # let _ = std::fs::remove_file("test1.odb");
 //! # let _ = std::fs::remove_file("test1.log");
 //! # #[cfg(target_pointer_width = "64")]
@@ -17,7 +16,6 @@
 //! match tmfalloc::Holder::<S>::new("test1", None, tmfalloc::MI,
 //!         0xfedcab0987654321, |a| { panic!("Impossible!") }).unwrap_err() {
 //!     tmfalloc::Error::IoError(e) => {
-//!         eprintln!("test 1 {}", unsafe { GetLastError().unwrap_err() } );
 //!         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists) },
 //!     _ => panic!("Wrong type of error")
 //! }
