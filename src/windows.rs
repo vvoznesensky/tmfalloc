@@ -6,7 +6,7 @@ use windows::Win32::{
     Foundation,
     Storage::FileSystem,
     System::{Diagnostics::Debug, Memory, SystemServices::MAXDWORD, IO},
-    System::{Kernel, SystemInformation},
+    System::SystemInformation,
 };
 
 pub type File = Foundation::HANDLE;
@@ -115,14 +115,23 @@ impl MapHolder {
         let (hi, lo) = ((s >> 32) as u32, s as u32);
         const F: Memory::PAGE_PROTECTION_FLAGS = Memory::PAGE_READWRITE;
         let fm = result!(Memory::CreateFileMappingA(f, None, F, hi, lo, None))?;
+        eprintln!("MapHolder::new address my {a:p}");
         let a = if a.is_null() { None } else { Some(a) };
         let m = unsafe {
-            Memory::MapViewOfFileEx(fm, Memory::FILE_MAP_READ, 0, 0, s, a)
+            Memory::MapViewOfFileEx(fm, Memory::FILE_MAP_ALL_ACCESS, 0, 0, s, a)
         };
+        eprintln!("MapHolder::new address real {:p}", m.Value);
         if m.Value.is_null() {
+            eprintln!("MapHolder::new {}", unsafe { Foundation::GetLastError().unwrap_err() } );
             panic_syserr!(Foundation::CloseHandle(fm));
-            Err(std::io::Error::last_os_error())
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Uncategorized {
+                Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+            } else {
+                Err(e)
+            }
         } else {
+            unsafe { mprotect_r(m.Value, s) };
             Ok(MapHolder {
                 arena: m.Value,
                 size: s,
@@ -214,10 +223,10 @@ unsafe extern "system" fn filter(
 ) -> i32 {
     let er = info.as_ref().unwrap().ExceptionRecord;
     let ok = match (*er).ExceptionCode {
-        Foundation::EXCEPTION_IN_PAGE_ERROR => {
+        /* Foundation::EXCEPTION_IN_PAGE_ERROR => {
             let addr = er_to_addr(*er);
             MEMORY_VIOLATION_HANDLER.unwrap()(addr, true)
-        }
+        } */
         Foundation::EXCEPTION_ACCESS_VIOLATION => {
             let addr = er_to_addr(*er);
             MEMORY_VIOLATION_HANDLER.unwrap()(addr, false)
@@ -225,10 +234,14 @@ unsafe extern "system" fn filter(
         _ => false,
     };
     if ok {
-        Kernel::ExceptionContinueExecution.0
+        // Cannot use Kernel::ExceptionContinueExecution.0, because it is 0.
+        const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
+        EXCEPTION_CONTINUE_EXECUTION
     } else {
+        // Cannot use Kernel::ExceptionContinueSearch.0, because it is 1.
+        const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
         match unsafe { OLDFILTER } {
-            None => Kernel::ExceptionContinueSearch.0,
+            None => EXCEPTION_CONTINUE_SEARCH,
             Some(oldfilter) => oldfilter(info),
         }
     }

@@ -9,6 +9,7 @@ fn page_boundary() {
     let _ = std::fs::remove_file("test_page_boundary.odb");
     let _ = std::fs::remove_file("test_page_boundary.log");
     type V = Vec<u64, Allocator>;
+    eprintln!("000");
     let mut h = Holder::<V>::new(
         "test_page_boundary",
         None,
@@ -17,13 +18,16 @@ fn page_boundary() {
         |a| V::new_in(a),
     )
     .unwrap();
+    eprintln!("100");
     let mut w = h.write();
     const I: usize = 16 * KI;
     w.extend_from_slice(&[0u64; I]);
+    eprintln!("200");
     for i in 0..I * 8 - 7 {
         let a = unsafe { w.as_mut_ptr().byte_add(i).as_mut() }.unwrap();
         *a = !*a;
     }
+    eprintln!("300");
     w.commit();
     drop(w);
 
@@ -34,6 +38,8 @@ fn page_boundary() {
             .concat()
     );
 
+    drop(r);
+    drop(h);
     let _ = std::fs::remove_file("test_page_boundary.odb");
     let _ = std::fs::remove_file("test_page_boundary.log");
 }
@@ -57,6 +63,8 @@ fn read_recovery() {
         .expect("failed to execute test binary");
     assert_eq!(output.stdout, b"w: 1\n");
     assert_eq!(*h.read(), 0);
+
+    drop(h);
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
 }
@@ -124,6 +132,31 @@ fn grow_and_shrink() {
     ));
     let a3m = w.threelittlepigs.as_ptr();
     assert_eq!(unsafe { a1m.byte_add(64) }, a3m);
+
+    drop(w);
+    drop(h);
     let _ = std::fs::remove_file("test_grow_and_shrink.odb");
     let _ = std::fs::remove_file("test_grow_and_shrink.log");
 }
+
+/*//! ## Concurrent threads access
+//! ### Single file single mapping parallel read
+//! ```
+//! # let _ = std::fs::remove_file("test7.odb");
+//! # let _ = std::fs::remove_file("test7.log");
+//! //
+//! # let _ = std::fs::remove_file("test7.odb");
+//! # let _ = std::fs::remove_file("test7.log");
+//! ```
+//!
+//! ### Single file multiple mappings parallel read
+//! ```
+//! ```
+//!
+//! ### Multiple files multiple mappings parallel read
+//! ```
+//! ```
+//!
+//! ### Multiple writers race condition detector
+//! ```
+//! ```*/

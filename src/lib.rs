@@ -2,6 +2,7 @@
 //!
 //! ## Storage initialization
 //! ```
+//! use windows::Win32::Foundation::GetLastError;
 //! # let _ = std::fs::remove_file("test1.odb");
 //! # let _ = std::fs::remove_file("test1.log");
 //! # #[cfg(target_pointer_width = "64")]
@@ -15,10 +16,12 @@
 //! // Detects memory areas overlapping:
 //! match tmfalloc::Holder::<S>::new("test1", None, tmfalloc::MI,
 //!         0xfedcab0987654321, |a| { panic!("Impossible!") }).unwrap_err() {
-//!     tmfalloc::Error::IoError(e) =>
-//!         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists),
+//!     tmfalloc::Error::IoError(e) => {
+//!         eprintln!("test 1 {}", unsafe { GetLastError().unwrap_err() } );
+//!         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists) },
 //!     _ => panic!("Wrong type of error")
 //! }
+//! # drop(h);
 //! # let _ = std::fs::remove_file("test1.odb");
 //! # let _ = std::fs::remove_file("test1.log");
 //! ```
@@ -48,6 +51,8 @@
 //! assert_eq!(r.0, 31415926);
 //! assert_eq!(h2.address(), ADDRESS);
 //! assert_eq!(h2.size(), tmfalloc::MI);
+//! # drop(r);
+//! # drop(h2);
 //! # let _ = std::fs::remove_file("test2.odb");
 //! # let _ = std::fs::remove_file("test2.log");
 //! ```
@@ -77,6 +82,8 @@
 //! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 2718281828);
+//! # drop(r);
+//! # drop(h2);
 //! # let _ = std::fs::remove_file("test3.odb");
 //! # let _ = std::fs::remove_file("test3.log");
 //! ```
@@ -104,6 +111,8 @@
 //! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 2718281828);
+//! # drop(r);
+//! # drop(h2);
 //! # let _ = std::fs::remove_file("test4.odb");
 //! # let _ = std::fs::remove_file("test4.log");
 //! ```
@@ -162,6 +171,8 @@
 //!     assert_eq!(Some(&j), i.next());
 //! }
 //! assert_eq!(None, i.next());
+//! # drop(r);
+//! # drop(h2);
 //! # let _ = std::fs::remove_file("test5.odb");
 //! # let _ = std::fs::remove_file("test5.log");
 //! ```
@@ -191,7 +202,8 @@
 //! let address2 = w.as_ptr();
 //! w.commit();
 //! assert_eq!(address1, address2);
-//!
+//! # drop(w);
+//! # drop(h);
 //! # let _ = std::fs::remove_file("test6.odb");
 //! # let _ = std::fs::remove_file("test6.log");
 //! ```
@@ -204,7 +216,7 @@
 //! # #[cfg(target_pointer_width = "64")]
 //! # const ADDRESS: usize = 0x70ffe6700000;
 //! # #[cfg(target_pointer_width = "64")]
-//! # const SIZE: usize = 512 * tmfalloc::GI;
+//! # const SIZE: usize = 5 * tmfalloc::GI;
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6700000;
 //! # #[cfg(target_pointer_width = "32")]
@@ -235,28 +247,6 @@
 //! # let _ = std::fs::remove_file("test7.odb");
 //! # let _ = std::fs::remove_file("test7.log");
 //! ```
-//!
-/*//! ## Concurrent threads access
-//! ### Single file single mapping parallel read
-//! ```
-//! # let _ = std::fs::remove_file("test7.odb");
-//! # let _ = std::fs::remove_file("test7.log");
-//! //
-//! # let _ = std::fs::remove_file("test7.odb");
-//! # let _ = std::fs::remove_file("test7.log");
-//! ```
-//!
-//! ### Single file multiple mappings parallel read
-//! ```
-//! ```
-//!
-//! ### Multiple files multiple mappings parallel read
-//! ```
-//! ```
-//!
-//! ### Multiple writers race condition detector
-//! ```
-//! ```*/
 
 #![feature(
     allocator_api,
@@ -267,7 +257,8 @@
     const_mut_refs,
     alloc_layout_extra,
     slice_ptr_get,
-    btreemap_alloc
+    btreemap_alloc,
+    io_error_uncategorized
 )]
 
 use const_str;
@@ -774,7 +765,7 @@ fn initialize_header<Root>(
 ) {
     let hp = addr as *mut Header<Root>;
     let ptr = unsafe { hp.as_mut() }.unwrap();
-    ptr.h = HeaderOfHeader {
+    let h = HeaderOfHeader {
         filetype: FILETYPE,
         version: VERSION,
         endian_bitness: ENDIAN_BITNESS,
@@ -786,6 +777,7 @@ fn initialize_header<Root>(
             BySizeAddressAdapter::new(),
         )),
     };
+    ptr.h = h;
     let fbraw = unsafe { hp.add(1) };
     let fbaddr = fbraw as usize;
     let fbraw = unsafe {
@@ -889,7 +881,7 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
                 *g.fd,
                 *g.log_fd,
                 g.mem.arena,
-                g.mem.size,
+                g.page_size,
             )
         };
     }
@@ -932,7 +924,7 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
                 *a.fd,
                 *a.log_fd,
                 a.mem.arena,
-                a.mem.size,
+                a.page_size,
             )
         };
         self.remseg();

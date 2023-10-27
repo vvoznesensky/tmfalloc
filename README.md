@@ -38,6 +38,7 @@ client cache, embedded application data storage, etc.
  * Debugged and tested on `x86` CPU, so now both 32 and 64-bit
    architectures are supported.
  * Fixed a non-critical bug in `Allocator::grow`.
+ * Fixed a critical bug in calls of `rollback`.
 
 ## To do list
  * Concurrent threads access tests to detect race conditions.
@@ -49,6 +50,7 @@ client cache, embedded application data storage, etc.
  * 100% code lines test coverage. How to collect coverage of docs tests?
  * Do less RBTrees traversal on (de/re)allocations by (re)using already
    available pointers.
+ * 
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or
