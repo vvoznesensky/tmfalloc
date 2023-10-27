@@ -51,7 +51,6 @@ client cache, embedded application data storage, etc.
  * 100% code lines test coverage. How to collect coverage of docs tests?
  * Do less RBTrees traversal on (de/re)allocations by (re)using already
    available pointers.
- * 
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or
