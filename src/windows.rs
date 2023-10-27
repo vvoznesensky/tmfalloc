@@ -115,16 +115,11 @@ impl MapHolder {
         let (hi, lo) = ((s >> 32) as u32, s as u32);
         const F: Memory::PAGE_PROTECTION_FLAGS = Memory::PAGE_READWRITE;
         let fm = result!(Memory::CreateFileMappingA(f, None, F, hi, lo, None))?;
-        eprintln!("MapHolder::new address my {a:p}");
         let a = if a.is_null() { None } else { Some(a) };
         let m = unsafe {
             Memory::MapViewOfFileEx(fm, Memory::FILE_MAP_ALL_ACCESS, 0, 0, s, a)
         };
-        eprintln!("MapHolder::new address real {:p}", m.Value);
         if m.Value.is_null() {
-            eprintln!("MapHolder::new {}", unsafe {
-                Foundation::GetLastError().unwrap_err()
-            });
             panic_syserr!(Foundation::CloseHandle(fm));
             let e = std::io::Error::last_os_error();
             if e.kind() == std::io::ErrorKind::Uncategorized {

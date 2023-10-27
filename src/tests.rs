@@ -64,14 +64,13 @@ fn read_recovery() {
     w.extend_from_slice(&v);
     w.commit();
     drop(w);
+    assert_eq!(*h.read(), v);
 
     let test_bin_path = build_test_binary("suicider", "testbins")
         .expect("error building test binary");
     let output = Command::new(test_bin_path)
         .output()
         .expect("failed to execute test binary");
-    eprintln!("{}", const_str::format!("w: {}\n", 1 - VS));
-    eprintln!("{}", String::from_utf8(output.stderr).unwrap());
     assert_eq!(
         output.stdout,
         const_str::to_byte_array!(const_str::format!("w: {}\n", 1 - VS))

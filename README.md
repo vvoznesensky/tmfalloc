@@ -38,8 +38,8 @@ client cache, embedded application data storage, etc.
  * Debugged and tested on `x86` CPU, so now both 32 and 64-bit
    architectures are supported.
  * Fixed a non-critical bug in `Allocator::grow`.
- * Fixed a critical bug in calls of `rollback`. `read_recovery` test updated to
-   cover multi-page rollbacks after crash.
+ * Fixed a critical bug in calls of `rollback` on multi-page rollbacks after
+   crash. `read_recovery` test updated to cover this scenario.
 
 ## To do list
  * Concurrent threads access tests to detect race conditions.

@@ -442,7 +442,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
                             *guard.fd,
                             *guard.log_fd,
                             guard.mem.arena,
-                            guard.mem.size,
+                            guard.page_size,
                         )
                     };
                     os::flock_r(*guard.fd);
@@ -468,7 +468,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
                 *guard.fd,
                 *guard.log_fd,
                 guard.mem.arena,
-                guard.mem.size,
+                guard.page_size,
             )
         };
         let rv = InternalWriter::<Root, PAGES_WRITABLE_FILE_NOT_LOCKED> {

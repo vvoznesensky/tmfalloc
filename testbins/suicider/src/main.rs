@@ -2,7 +2,7 @@
 use std::io;
 use std::io::Write;
 use std::process;
-use tmfalloc::{Holder, MI, KI, Allocator};
+use tmfalloc::{Allocator, Holder, KI, MI};
 
 fn main() {
     let mut h = Holder::<Vec<i64, Allocator>>::new(
