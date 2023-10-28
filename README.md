@@ -27,7 +27,7 @@ client cache, embedded application data storage, etc.
 
 ## Caveats on current limitations
  * Storage `Holder` does not endure process `fork`.
- * `unsafe`-saturated, so highly experimental.
+ * `unsafe`-saturated, so yet experimental.
  * Explicit memory mapping address specification on storage initialization is
    recommended.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
@@ -38,7 +38,7 @@ client cache, embedded application data storage, etc.
  * Debugged and tested on `x86` CPU, so now both 32 and 64-bit
    architectures are supported.
  * Fixed a non-critical bug in `Allocator::grow`.
- * Fixed a critical bug in calls of `rollback` on multi-page rollbacks after
+ * Fixed a critical bug in calls of `rollback` on multi-page recoveries after
    crash. `read_recovery` test updated to cover this scenario.
 
 ## To do list
@@ -51,6 +51,9 @@ client cache, embedded application data storage, etc.
  * 100% code lines test coverage. How to collect coverage of docs tests?
  * Do less RBTrees traversal on (de/re)allocations by (re)using already
    available pointers.
+ * Organize arena pointer and size as a slice in `Arena` struct for less
+   confusion?
+ * Explicit `Writer::allocator()` for nested containers?
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or
