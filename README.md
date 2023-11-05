@@ -54,6 +54,9 @@ client cache, embedded application data storage, etc.
  * Organize arena pointer and size as a slice in `Arena` struct for less
    confusion?
  * Explicit `Writer::allocator()` for nested containers?
+ * Correct `unsafe` annotation of API functions, hence break the backward
+   compatibility forcing users to mark their calling code as `unsafe` and switch
+   to 1.0 version?
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or
