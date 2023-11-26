@@ -5,13 +5,13 @@ use std::process;
 use tmfalloc::{Allocator, Holder, KI, MI};
 
 fn main() {
-    let mut h = Holder::<Vec<i64, Allocator>>::new(
+    let mut h = unsafe { Holder::<Vec<i64, Allocator>>::open(
         "test_read_recovery",
         None,
         MI,
         0xfedcba9876543210,
         |_| panic!("Impossible!"),
-    )
+    ) }
     .unwrap();
     let mut w = h.write();
     w.truncate(0);

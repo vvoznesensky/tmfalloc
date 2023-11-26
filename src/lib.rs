@@ -10,11 +10,12 @@
 //! # const ADDRESS: usize = 0xb6100000;
 //! ##[derive(Debug)]
 //! struct S { /* some fields */ };
-//! let h = tmfalloc::Holder::<S>::new("test1", Some(ADDRESS), tmfalloc::MI,
-//!         0xfedcab0987654321, |a| { S{ /* ... */ } }).unwrap();
+//! let h = unsafe {
+//!     tmfalloc::Holder::<S>::open("test1", Some(ADDRESS), tmfalloc::MI,
+//!                 0xfedcab0987654321, |a| { S{ /* ... */ } }) }.unwrap();
 //! // Detects memory areas overlapping:
-//! match tmfalloc::Holder::<S>::new("test1", None, tmfalloc::MI,
-//!         0xfedcab0987654321, |a| { panic!("Impossible!") }).unwrap_err() {
+//! match unsafe { tmfalloc::Holder::<S>::open("test1", None, tmfalloc::MI,
+//!                 0xfedcab0987654321, |a| { panic!("!") }) }.unwrap_err() {
 //!     tmfalloc::Error::IoError(e) => {
 //!         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists) },
 //!     _ => panic!("Wrong type of error")
@@ -33,8 +34,9 @@
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6200000;
 //! struct S(u64);
-//! let mut h1 = tmfalloc::Holder::<S>::new("test2", Some(ADDRESS),
-//!     tmfalloc::MI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! let mut h1 = unsafe {
+//!     tmfalloc::Holder::<S>::open("test2", Some(ADDRESS), tmfalloc::MI,
+//!                     0x1234567890abcdef, |a| { S(2718281828) }) }.unwrap();
 //! let mut w = h1.write();
 //! w.0 = 31415926;
 //!
@@ -43,8 +45,9 @@
 //! drop(w);
 //! drop(h1);
 //!
-//! let h2 = tmfalloc::Holder::<S>::new("test2", None, tmfalloc::MI,
-//!     0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
+//! let h2 = unsafe {
+//!     tmfalloc::Holder::<S>::open("test2", None, tmfalloc::MI,
+//!                     0x1234567890abcdef, |a| { panic!("!")} ) }.unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 31415926);
 //! assert_eq!(h2.address(), ADDRESS);
@@ -65,8 +68,9 @@
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6300000;
 //! # struct S(u64);
-//! # let mut h1 = tmfalloc::Holder::<S>::new("test3", Some(ADDRESS),
-//! #    tmfalloc::MI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! # let mut h1 = unsafe {
+//! #    tmfalloc::Holder::<S>::open("test3", Some(ADDRESS), tmfalloc::MI,
+//! #                   0x1234567890abcdef, |a| { S(2718281828) }) }.unwrap();
 //! # let mut w = h1.write();
 //! // --snip--
 //! w.0 = 31415926;
@@ -76,8 +80,9 @@
 //! // --snip--
 //! # drop(w);
 //! # drop(h1);
-//! # let h2 = tmfalloc::Holder::<S>::new("test3", None, tmfalloc::MI,
-//! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
+//! # let h2 = unsafe {
+//! #   tmfalloc::Holder::<S>::open("test3", None, tmfalloc::MI,
+//! #                   0x1234567890abcdef, |a| { panic!("!") }) }.unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 2718281828);
 //! # drop(r);
@@ -95,8 +100,9 @@
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6400000;
 //! # struct S(u64);
-//! # let mut h1 = tmfalloc::Holder::<S>::new("test4", Some(ADDRESS),
-//! #    tmfalloc::MI, 0x1234567890abcdef, |a| { S(2718281828) }).unwrap();
+//! # let mut h1 = unsafe {
+//! #   tmfalloc::Holder::<S>::open("test4", Some(ADDRESS), tmfalloc::MI,
+//! #                   0x1234567890abcdef, |a| { S(2718281828) }) }.unwrap();
 //! # let mut w = h1.write();
 //! // --snip--
 //! w.0 = 31415926;
@@ -105,8 +111,9 @@
 //! drop(w);
 //! drop(h1);
 //! // --snip--
-//! # let h2 = tmfalloc::Holder::<S>::new("test4", None, tmfalloc::MI,
-//! #   0x1234567890abcdef, |a| {panic!("Should never happen")} ).unwrap();
+//! # let h2 = unsafe {
+//! #   tmfalloc::Holder::<S>::open("test4", None, tmfalloc::MI,
+//! #                   0x1234567890abcdef, |a| {panic!("!") }) }.unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.0, 2718281828);
 //! # drop(r);
@@ -140,8 +147,9 @@
 //!         s: std::collections::BTreeSet::<usize, A>::new_in(a),
 //!     }
 //! } }
-//! let mut h1 = tmfalloc::Holder::<S>::new("test5", Some(ADDRESS),
-//!                          tmfalloc::MI, 0xfedcba9876543210, S::new).unwrap();
+//! let mut h1 = unsafe {
+//!     tmfalloc::Holder::<S>::open("test5", Some(ADDRESS), tmfalloc::MI,
+//!                     0xfedcba9876543210, S::new) }.unwrap();
 //! let mut w = h1.write();
 //! let a: A = w.allocator();
 //! w.v.extend_from_slice(b"Once upon a time...");
@@ -155,8 +163,9 @@
 //! drop(w);
 //! drop(h1);
 //!
-//! let h2 = tmfalloc::Holder::<S>::new("test5", None, tmfalloc::MI,
-//!          0xfedcba9876543210, |a| {panic!("Should never happen")} ).unwrap();
+//! let h2 = unsafe {
+//!     tmfalloc::Holder::<S>::open("test5", None, tmfalloc::MI,
+//!                     0xfedcba9876543210, |a| {panic!("!")}) }.unwrap();
 //! let r = h2.read();
 //! assert_eq!(r.v, b"Once upon a time...");
 //! assert_eq!(*r.b, 12345);
@@ -185,8 +194,9 @@
 //! # #[cfg(target_pointer_width = "32")]
 //! # const ADDRESS: usize = 0xb6600000;
 //! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
-//! let mut h = tmfalloc::Holder::<V>::new("test6", Some(ADDRESS),
-//!         tmfalloc::MI, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
+//! let mut h = unsafe {
+//!     tmfalloc::Holder::<V>::open("test6", Some(ADDRESS), tmfalloc::MI,
+//!                     0xfedcba9876543210, |a| { V::new_in(a) }) }.unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(b"Once upon a time...");
 //! let address1 = w.as_ptr();
@@ -220,15 +230,17 @@
 //! # #[cfg(target_pointer_width = "32")]
 //! # const SIZE: usize = 5 * tmfalloc::MI;
 //! type V = std::vec::Vec<u8, tmfalloc::Allocator>;
-//! let mut h = tmfalloc::Holder::<V>::new("test7", Some(ADDRESS),
-//!           SIZE, 0xfedcba9876543210, |a| { V::new_in(a) }).unwrap();
+//! let mut h = unsafe {
+//!     tmfalloc::Holder::<V>::open("test7", Some(ADDRESS), SIZE,
+//!                     0xfedcba9876543210, |a| { V::new_in(a) }) }.unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(&[b'.'; tmfalloc::MI - 2 * tmfalloc::KI]);
 //! w.commit();
 //! drop(w);
 //! drop(h);
-//! let mut h = tmfalloc::Holder::<V>::new("test7", None, 2 *
-//!             SIZE, 0xfedcba9876543210, |a| { panic!("!") }).unwrap();
+//! let mut h = unsafe {
+//!     tmfalloc::Holder::<V>::open("test7", None, 2 * SIZE,
+//!                     0xfedcba9876543210, |a| { panic!("!") }) }.unwrap();
 //! let mut w = h.write();
 //! w.extend_from_slice(&[b'.'; tmfalloc::MI]);
 //! w.commit();
@@ -237,8 +249,9 @@
 //! w.commit();
 //! drop(w);
 //! drop(h);
-//! match tmfalloc::Holder::<V>::new("test7", None, SIZE,
-//!             0xfedcba9876543210, |a| { panic!("!") }).unwrap_err() {
+//! match unsafe {
+//!         tmfalloc::Holder::<V>::open("test7", None, SIZE,
+//!             0xfedcba9876543210, |a| { panic!("!") }) }.unwrap_err() {
 //!     tmfalloc::Error::WrongSize => {},
 //!     _ => panic!("Wrong type of error")
 //! }
@@ -261,23 +274,24 @@
 
 use const_str;
 use ctor;
-use intrusive_collections::intrusive_adapter;
-use intrusive_collections::{KeyAdapter, RBTree, RBTreeLink, UnsafeRef};
+use intrusive_collections::{RBTree, UnsafeRef};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::marker;
 use std::mem::ManuallyDrop;
 use std::ops;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-pub mod allocator;
-pub use allocator::Allocator;
+mod allocator;
+use allocator::new_allocator;
+pub use allocator::{Allocator, ALLOCATION_QUANTUM};
+use allocator::{ByAddressAdapter, BySizeAddressAdapter, FreeBlock};
 #[cfg_attr(unix, path = "unix.rs")]
 #[cfg_attr(windows, path = "windows.rs")]
 mod os;
-pub use os::MapHolder;
+use os::MapHolder;
 
 ////////////////////////////////////////////////////////////////////////////////
-// FileHolder: RAII fixture to handle raw files
+// RAII fixture to handle raw files
 #[derive(Debug)]
 struct FileHolder(os::File);
 impl FileHolder {
@@ -311,7 +325,8 @@ impl Drop for FileHolder {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Arena: internal structure to hold all the file and mapping stuff.
+/// Internal structure to hold all the file and mapping stuff.
+///
 /// Created by Holder instance and shared by all it's clones in all threads.
 #[derive(Debug)]
 struct Arena {
@@ -324,22 +339,23 @@ struct Arena {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Auxilliary constants
-/// Ki, kibi
+/// Ki, kibi.
 pub const KI: usize = 1024;
-/// Mi, mebi
+/// Mi, mebi.
 pub const MI: usize = 1024 * KI;
-/// Gi, gibi
+/// Gi, gibi.
 pub const GI: usize = 1024 * MI;
 #[cfg(target_pointer_width = "64")]
-/// Ti, tebi
+/// Ti, tebi.
 pub const TI: usize = 1024 * GI;
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Holder: RAII fixture to initialize the storage files and mmapping
+/// RAII fixture to provide [`Holder::read`] and [`Holder::write`] storage
+/// access methods on open files and memory mapping.
 ///
 /// Shares file mapped memory allocation arena with all it's clones.
 ///
-/// Do not mess up with the Root type: this crate cannot figure out if the type
+/// Do not mess up with the `Root` type: this crate cannot figure out if the type
 /// of root object has been changed someway.
 #[derive(Debug, Clone)]
 pub struct Holder<'a, Root: 'a> {
@@ -347,7 +363,7 @@ pub struct Holder<'a, Root: 'a> {
     phantom: marker::PhantomData<&'a Root>,
 }
 
-/// Error: all possible errors of [Holder] and arena initialization
+/// All possible errors of [`Holder`] and arena initialization.
 #[derive(Debug)]
 pub enum Error {
     IoError(std::io::Error),
@@ -364,12 +380,12 @@ impl From<std::io::Error> for Error {
     }
 }
 
-/// [Holder::open] result
+/// A [`Holder::open`] result.
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl<'a, Root: 'a> Holder<'a, Root> {
     /// Initialize new or open existing persistent allocation space (arena) and
-    /// get it's [Holder].
+    /// get it's [`Holder`].
     ///
     /// # Arguments
     /// `file_pfx` - main (`.odb`) and log (`.log`) files path prefix.
@@ -434,7 +450,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         prep_header(&s, magick, shown, arena_size, new_root)?;
         Ok(s)
     }
-    /// Shared-lock the storage and get [Reader] smart pointer to the Root
+    /// Shared-lock the storage and get [`Reader`] smart pointer to the `Root`
     /// instance inside the storage.
     pub fn read(&self) -> Reader<Root> {
         let guard = self.arena.read().unwrap();
@@ -486,8 +502,8 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         rv.setseg();
         rv
     }
-    /// Exclusive-lock the storage and get [Writer] smart pointer to the Root
-    /// instance inside the storage.
+    /// Exclusive-lock the storage and get [`Writer`] smart pointer to the
+    /// `Root` instance inside the storage.
     pub fn write(&mut self) -> Writer<Root> {
         self.internal_write::<true>()
     }
@@ -741,26 +757,28 @@ fn grow_up_free_block<Root>(
     let old_size = ph.size;
     match cl.get() {
         // lower neighbour
-        None => FreeBlock::initialize(
-            ph,
-            unsafe { hp.byte_add(old_size) } as *const FreeBlock,
-            size - old_size,
-        ),
-        Some(l) => {
+        None => unsafe {
+            FreeBlock::initialize(
+                ph,
+                hp.byte_add(old_size) as *const FreeBlock,
+                size - old_size,
+            )
+        },
+        Some(l) => unsafe {
             let lp = l as *const FreeBlock;
-            if unsafe { lp.byte_add(l.size) } < p {
+            if lp.byte_add(l.size) < p {
                 FreeBlock::initialize(
                     ph,
-                    unsafe { hp.byte_add(old_size) } as *const FreeBlock,
+                    hp.byte_add(old_size) as *const FreeBlock,
                     size - old_size,
                 )
             } else {
-                unsafe { ph.by_size_address.cursor_mut_from_ptr(lp) }.remove();
-                let lr = unsafe { lp.cast_mut().as_mut() }.unwrap();
+                ph.by_size_address.cursor_mut_from_ptr(lp).remove();
+                let lr = lp.cast_mut().as_mut().unwrap();
                 lr.size += size - old_size;
-                ph.by_size_address.insert(unsafe { UnsafeRef::from_raw(lp) });
+                ph.by_size_address.insert(UnsafeRef::from_raw(lp));
             }
-        }
+        },
     };
     ph.size = size;
     let wg = &w.guard;
@@ -793,9 +811,13 @@ fn initialize_header<Root>(
     let fbraw = unsafe {
         fbraw.byte_add(ALLOCATION_QUANTUM - (fbaddr % ALLOCATION_QUANTUM))
     } as *mut FreeBlock;
-    FreeBlock::initialize(&mut ptr.h, fbraw, unsafe {
-        hp.byte_add(size).byte_offset_from(fbraw).try_into().unwrap()
-    });
+    unsafe {
+        FreeBlock::initialize(
+            &mut ptr.h,
+            fbraw,
+            hp.byte_add(size).byte_offset_from(fbraw).try_into().unwrap(),
+        )
+    };
     ptr.root = ManuallyDrop::new(new_root(w.allocator()));
     let wg = &w.guard;
     unsafe { commit(*wg.fd, *wg.log_fd, wg.mem.arena, wg.mem.size) };
@@ -839,10 +861,10 @@ fn header_is_ok_state(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Reader: a smart pointer allowing storage concurrent read access
+/// A smart pointer to the `Root` for storage concurrent read access.
 ///
 /// Can be created by [`Holder::read`] method. Holds shared locks to the memory
-/// mapped file storage until dropped. Provides shared read access to `Root`
+/// mapped file storage until dropped. Provides shared read access to the `Root`
 /// persistent instance.
 pub struct Reader<'a, Root> {
     guard: RwLockReadGuard<'a, Arena>,
@@ -871,9 +893,9 @@ impl<Root> Drop for Reader<'_, Root> {
 
 ////////////////////////////////////////////////////////////////////////////////
 // InternalWriter accessor to allow storage exclusive write access.
-/// A smart pointer allowing storage exclusive write access
+/// A smart pointer to the `Root` for storage exclusive write access.
 ///
-/// Not indended for direct creation by a user. See [Writer].
+/// Not indended for direct creation by a user. See [`Writer`].
 pub struct InternalWriter<'a, Root, const PAGES_WRITABLE: bool> {
     guard: RwLockWriteGuard<'a, Arena>,
     //_arena: Arc<RwLock<Arena>>,
@@ -883,7 +905,7 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
     InternalWriter<'a, Root, PAGES_WRITABLE>
 {
     /// Rollback the current transaction. Automatically called in
-    /// [InternalWriter::drop] method.
+    /// [`InternalWriter::drop`] method.
     pub fn rollback(&self) {
         let g = &self.guard;
         unsafe {
@@ -902,7 +924,7 @@ impl<'a, Root, const PAGES_WRITABLE: bool>
     }
     /// Create allocator to use in collections and containers.
     pub fn allocator(&self) -> Allocator {
-        Allocator { address: self.guard.mem.arena as usize }
+        new_allocator(self.guard.mem.arena as usize)
     }
 }
 impl<Root, const PAGES_WRITABLE: bool> ops::Deref
@@ -942,60 +964,12 @@ impl<Root, const PAGES_WRITABLE: bool> Drop
     }
 }
 
-/// Writer: a smart pointer allowing storage exclusive write access
+/// A smart pointer to the `Root` for storage exclusive write access.
 ///
-/// Can be created by [Holder::write] method. Holds exclusive locks to the
+/// Can be created by [`Holder::write`] method. Holds exclusive locks to the
 /// memory mapped file storage until dropped. Provides exclusive write access to
-/// Root persistent instance.
+/// the `Root` persistent instance.
 pub type Writer<'a, Root> = InternalWriter<'a, Root, true>;
-
-////////////////////////////////////////////////////////////////////////////////
-// Red-black trees allocator muscellaneous stuff
-
-// FreeBlock: a (header of) piece of empty space.
-struct FreeBlock {
-    by_size_address: RBTreeLink,
-    by_address: RBTreeLink,
-    size: usize,
-    _padding: usize,
-}
-/// Common divisor of any allocation arena consumption in bytes.
-pub const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
-impl FreeBlock {
-    fn initialize(h: &mut HeaderOfHeader, fbr: *const FreeBlock, size: usize) {
-        let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
-        let fbref = unsafe { fbptr.as_mut() }.unwrap();
-        fbref._padding = !fbref._padding; // Cause SIGBUS if file too small.
-        *fbref = ManuallyDrop::new(FreeBlock {
-            by_address: RBTreeLink::new(),
-            by_size_address: RBTreeLink::new(),
-            size,
-            _padding: 0,
-        });
-        h.by_address.insert(unsafe { UnsafeRef::from_raw(fbr) });
-        h.by_size_address.insert(unsafe { UnsafeRef::from_raw(fbr) });
-    }
-    fn finalize(h: &mut HeaderOfHeader, fbr: *const FreeBlock) {
-        unsafe { h.by_address.cursor_mut_from_ptr(fbr) }.remove();
-        unsafe { h.by_size_address.cursor_mut_from_ptr(fbr) }.remove();
-    }
-}
-intrusive_adapter!(ByAddressAdapter = UnsafeRef<FreeBlock>:
-                            FreeBlock { by_address: RBTreeLink });
-impl<'a> KeyAdapter<'a> for ByAddressAdapter {
-    type Key = *const FreeBlock;
-    fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
-        x as *const FreeBlock
-    }
-}
-intrusive_adapter!(BySizeAddressAdapter = UnsafeRef<FreeBlock>:
-                            FreeBlock { by_size_address: RBTreeLink });
-impl<'a> KeyAdapter<'a> for BySizeAddressAdapter {
-    type Key = (usize, *const FreeBlock);
-    fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
-        (x.size, x as *const FreeBlock)
-    }
-}
 
 #[cfg(test)]
 mod tests;

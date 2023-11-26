@@ -38,18 +38,22 @@ client cache, embedded application data storage, etc.
    architectures, that may be percieved as wasteful.
 
 ## What's new in 1.0.0
- * `unsafe Holder::open` substitutes `new` and formally breaks backward
-   compatibility, but improves correctness and sanity.
+ * Some documentation and API clearing.
+ * In particular, `unsafe` function `Holder::open` replaces `Holder::new` and
+   formally breaks backward compatibility, but improves correctness and sanity.
+ * 100% code lines test coverage. How to collect coverage of docs tests?
+ * 100% executable code lines test coverage. - TODO.
+ * Concurrent threads access tests to detect race conditions. - TODO.
+ * `Holder` is now `Send`. - TODO. Check that cannot send without dropping
+   Reader and Writer. 
  * ...
 
 ## To do list
- * Concurrent threads access tests to detect race conditions.
  * 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
    may be too slow. Any suggestions on how to improve this?
  * Main file page `mlock`-ing instead of log file immediate `fsync` in signal
    handler to increase write throughput and decrease latency.
  * Test multi-process concurrent read and exclusive write access.
- * 100% code lines test coverage. How to collect coverage of docs tests?
  * Do less RBTrees traversal on (de/re)allocations by (re)using already
    available pointers.
  * Organize arena pointer and size as a slice in `Arena` struct for less

@@ -1,16 +1,78 @@
-use super::{FreeBlock, HeaderOfHeader, ALLOCATION_QUANTUM};
+use super::HeaderOfHeader;
+use intrusive_collections::intrusive_adapter;
 use intrusive_collections::Bound::Included as IntrusiveIncluded;
-use intrusive_collections::UnsafeRef;
+use intrusive_collections::{KeyAdapter, RBTreeLink, UnsafeRef};
 use std::alloc::{AllocError, Allocator as StdAllocator, Layout};
+use std::mem::ManuallyDrop;
 use std::ptr::{copy_nonoverlapping, NonNull};
+
 ////////////////////////////////////////////////////////////////////////////////
-/// Allocator applicable for standard containers to make them persistent
+// Red-black trees allocator muscellaneous stuff
+
+// FreeBlock: a (header of) piece of empty space.
+pub struct FreeBlock {
+    by_size_address: RBTreeLink,
+    by_address: RBTreeLink,
+    pub size: usize,
+    _padding: usize,
+}
+/// Common divisor of any allocation arena consumption in bytes.
+pub const ALLOCATION_QUANTUM: usize = std::mem::size_of::<FreeBlock>();
+impl FreeBlock {
+    pub(crate) unsafe fn initialize(
+        h: &mut HeaderOfHeader,
+        fbr: *const FreeBlock,
+        size: usize,
+    ) {
+        let fbptr = fbr as *mut ManuallyDrop<FreeBlock>;
+        let fbref = fbptr.as_mut().unwrap();
+        fbref._padding = !fbref._padding; // Cause SIGBUS if file too small.
+        *fbref = ManuallyDrop::new(FreeBlock {
+            by_address: RBTreeLink::new(),
+            by_size_address: RBTreeLink::new(),
+            size,
+            _padding: 0,
+        });
+        h.by_address.insert(UnsafeRef::from_raw(fbr));
+        h.by_size_address.insert(UnsafeRef::from_raw(fbr));
+    }
+    pub(crate) unsafe fn finalize(
+        h: &mut HeaderOfHeader,
+        fbr: *const FreeBlock,
+    ) {
+        h.by_address.cursor_mut_from_ptr(fbr).remove();
+        h.by_size_address.cursor_mut_from_ptr(fbr).remove();
+    }
+}
+intrusive_adapter!(pub ByAddressAdapter = UnsafeRef<FreeBlock>:
+                            FreeBlock { by_address: RBTreeLink });
+impl<'a> KeyAdapter<'a> for ByAddressAdapter {
+    type Key = *const FreeBlock;
+    fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
+        x as *const FreeBlock
+    }
+}
+intrusive_adapter!(pub BySizeAddressAdapter = UnsafeRef<FreeBlock>:
+                            FreeBlock { by_size_address: RBTreeLink });
+impl<'a> KeyAdapter<'a> for BySizeAddressAdapter {
+    type Key = (usize, *const FreeBlock);
+    fn get_key(&self, x: &'a FreeBlock) -> Self::Key {
+        (x.size, x as *const FreeBlock)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Allocator applicable for standard containers to make them persistent.
 ///
-/// Create [super::Writer] by [super::Holder::write] in the same thread before
+/// Create [`crate::Writer`] by [`crate::Holder::write`] in the same thread for
 /// allocation, deallocation and other persistent storage update.
 #[derive(Clone)]
 pub struct Allocator {
-    pub address: usize,
+    address: usize,
+}
+
+pub fn new_allocator(address: usize) -> Allocator {
+    Allocator { address }
 }
 
 unsafe impl StdAllocator for Allocator {
@@ -102,10 +164,10 @@ fn allocate(
         Some(r) => {
             let p = r as *const FreeBlock;
             let rs = r.size;
-            FreeBlock::finalize(h, p);
+            unsafe { FreeBlock::finalize(h, p) };
             if rs > s {
                 let n = unsafe { p.byte_add(s) } as *mut FreeBlock;
-                FreeBlock::initialize(h, n, rs - s);
+                unsafe { FreeBlock::initialize(h, n, rs - s) };
             }
             Ok(NonNull::slice_from_raw_parts(
                 NonNull::new(p as *mut u8).unwrap(),

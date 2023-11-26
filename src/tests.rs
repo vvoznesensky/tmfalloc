@@ -10,13 +10,15 @@ fn page_boundary() {
     let _ = std::fs::remove_file("test_page_boundary.odb");
     let _ = std::fs::remove_file("test_page_boundary.log");
     type V = Vec<u64, Allocator>;
-    let mut h = Holder::<V>::new(
-        "test_page_boundary",
-        None,
-        MI,
-        0xfedcba9876543210,
-        |a| V::new_in(a),
-    )
+    let mut h = unsafe {
+        Holder::<V>::open(
+            "test_page_boundary",
+            None,
+            MI,
+            0xfedcba9876543210,
+            |a| V::new_in(a),
+        )
+    }
     .unwrap();
     let mut w = h.write();
     const I: usize = 16 * KI;
@@ -46,13 +48,15 @@ fn read_recovery() {
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
     type V = Vec<i64, Allocator>;
-    let mut h = Holder::<V>::new(
-        "test_read_recovery",
-        None,
-        MI,
-        0xfedcba9876543210,
-        |a| V::new_in(a.clone()),
-    )
+    let mut h = unsafe {
+        Holder::<V>::open(
+            "test_read_recovery",
+            None,
+            MI,
+            0xfedcba9876543210,
+            |a| V::new_in(a.clone()),
+        )
+    }
     .unwrap();
     let mut w = h.write();
     const VS: i64 = 120 * KI as i64;
@@ -89,18 +93,20 @@ fn grow_and_shrink() {
         threelittlepigs: V,
         fourseasons: V,
     }
-    let mut h = Holder::<S>::new(
-        "test_grow_and_shrink",
-        None,
-        MI,
-        0xfedcba9876543210,
-        |a| S {
-            onegin: V::new_in(a.clone()),
-            tworoads: V::new_in(a.clone()),
-            threelittlepigs: V::new_in(a.clone()),
-            fourseasons: V::new_in(a.clone()),
-        },
-    )
+    let mut h = unsafe {
+        Holder::<S>::open(
+            "test_grow_and_shrink",
+            None,
+            MI,
+            0xfedcba9876543210,
+            |a| S {
+                onegin: V::new_in(a.clone()),
+                tworoads: V::new_in(a.clone()),
+                threelittlepigs: V::new_in(a.clone()),
+                fourseasons: V::new_in(a.clone()),
+            },
+        )
+    }
     .unwrap();
     let mut w = h.write();
     w.onegin.extend_from_slice(b"My uncle has most honest principles:\n"); //37
