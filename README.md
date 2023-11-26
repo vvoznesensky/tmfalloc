@@ -26,20 +26,21 @@ client cache, embedded application data storage, etc.
  * Runs on 32- and 64-bit CPUs.
 
 ## Caveats on current limitations
- * Storage `Holder` does not endure process `fork`.
- * `unsafe`-saturated, so yet experimental.
- * Explicit memory mapping address specification on storage initialization is
+ * Do not use storage `Holder` in both parent and `fork`-ed child processes.
+ * It's not guaranteed if dangling pointers to unmapped storage memory could be
+   avoided in case of some non-standard use. In particular,
+   `tmfalloc::Allocator` can be cloned (this is a requirement of
+   `std::BTreeMap`) and leak out of destructed storage `Holder`.
+ * Memory mapping address cannot be changed after storage initialization. Hence,
+   explicit memory mapping address specification on storage initialization is
    recommended.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
-   architectures.
+   architectures, that may be percieved as wasteful.
 
-## What's new in 0.1.3
- * Microsoft Windows support.
- * Debugged and tested on `x86` CPU, so now both 32 and 64-bit
-   architectures are supported.
- * Fixed a non-critical bug in `Allocator::grow`.
- * Fixed a critical bug in calls of `rollback` on multi-page recoveries after
-   crash. `read_recovery` test updated to cover this scenario.
+## What's new in 1.0.0
+ * `unsafe Holder::open` substitutes `new` and formally breaks backward
+   compatibility, but improves correctness and sanity.
+ * ...
 
 ## To do list
  * Concurrent threads access tests to detect race conditions.
@@ -53,7 +54,6 @@ client cache, embedded application data storage, etc.
    available pointers.
  * Organize arena pointer and size as a slice in `Arena` struct for less
    confusion?
- * Explicit `Writer::allocator()` for nested containers?
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or

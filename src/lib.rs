@@ -364,12 +364,14 @@ impl From<std::io::Error> for Error {
     }
 }
 
-/// [Holder::new] initialization result
+/// [Holder::open] result
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl<'a, Root: 'a> Holder<'a, Root> {
-    /// Initialize arena and it's [Holder]
+    /// Initialize new or open existing persistent allocation space (arena) and
+    /// get it's [Holder].
     ///
+    /// # Arguments
     /// `file_pfx` - main (`.odb`) and log (`.log`) files path prefix.
     ///
     /// `arena_address` - optional address of arena space beginning. Useful for
@@ -378,8 +380,16 @@ impl<'a, Root: 'a> Holder<'a, Root> {
     /// `arena_size` - size of arena address space. Can grow, but cannot shrink.
     ///
     /// `magick` - user-defined magick number to distinguish among different
-    ///     versions of stored structures (i.e. schema). Dangerous to mess.
-    pub fn new(
+    ///     versions of stored structures (i.e. schemas). Dangerous to mess.
+    ///
+    /// # Safety
+    /// - Do not use the same magick on different data schemas. Consider to
+    ///   auto-generate magick number depending on software version or data
+    ///   schema declaration.
+    /// - Consider to depend file name on magick number or software version.
+    /// - Do not use pointers to the memory space of a destructed `Holder`.
+    /// - In particular, do not leak out (cloned) allocator.
+    pub unsafe fn open(
         file_pfx: &str,
         arena_address: Option<usize>,
         arena_size: usize,
@@ -425,7 +435,7 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         Ok(s)
     }
     /// Shared-lock the storage and get [Reader] smart pointer to the Root
-    /// instance inside
+    /// instance inside the storage.
     pub fn read(&self) -> Reader<Root> {
         let guard = self.arena.read().unwrap();
         {
@@ -477,17 +487,17 @@ impl<'a, Root: 'a> Holder<'a, Root> {
         rv
     }
     /// Exclusive-lock the storage and get [Writer] smart pointer to the Root
-    /// instance inside
+    /// instance inside the storage.
     pub fn write(&mut self) -> Writer<Root> {
         self.internal_write::<true>()
     }
 
-    /// Returns the numeric address of the arena space beginning
+    /// Returns the numeric address of the arena space beginning.
     pub fn address(&self) -> usize {
         self.arena.read().unwrap().mem.arena as usize
     }
 
-    /// Returns the size of the arena address space
+    /// Returns the size of the arena address space.
     pub fn size(&self) -> usize {
         self.arena.read().unwrap().mem.size as usize
     }
