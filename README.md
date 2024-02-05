@@ -41,19 +41,19 @@ client cache, embedded application data storage, etc.
  * Some documentation and API clearing.
  * In particular, `unsafe` function `Holder::open` replaces `Holder::new` and
    formally breaks backward compatibility, but improves correctness and sanity.
- * 100% code lines test coverage. How to collect coverage of docs tests?
- * 100% executable code lines test coverage. - TODO.
- * Concurrent threads access tests to detect race conditions. - TODO.
- * `Holder` is now `Send`. - TODO. Check that cannot send without dropping
-   Reader and Writer. 
- * ...
+ * Fixed 1.77 std::collections::btree\_map::Cursor API backward incompatibility
+   issue, minimal Rust version increased to 1.77.
+ * `Holder` is now of `Send` trait. - TODO. Check that cannot send without
+   dropping Reader and Writer. 
 
 ## To do list
+ * Concurrent threads access tests to detect race conditions.
  * 64 bytes allocation quantum may be too much. Two RBTrees holding free blocks
    may be too slow. Any suggestions on how to improve this?
  * Main file page `mlock`-ing instead of log file immediate `fsync` in signal
    handler to increase write throughput and decrease latency.
  * Test multi-process concurrent read and exclusive write access.
+ * 100% code lines test coverage. How to collect coverage of docs tests?
  * Do less RBTrees traversal on (de/re)allocations by (re)using already
    available pointers.
  * Organize arena pointer and size as a slice in `Arena` struct for less
@@ -66,7 +66,8 @@ client cache, embedded application data storage, etc.
 ## Author and feedback
 
 Vladimir Voznesenskiy [\<vvoznesensky@gmail.com\>](
-    mailto:vvoznesensky@gmail.com). Looking for a Rust job.
+    mailto:vvoznesensky@gmail.com). Looking for a Rust job. Please, send me an
+    email, if you need more tests, etc.
 
 Feedback is welcome.
 

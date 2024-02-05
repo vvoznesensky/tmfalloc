@@ -261,10 +261,8 @@
 
 #![feature(
     allocator_api,
-    pointer_byte_offsets,
     btree_cursors,
     concat_bytes,
-    ptr_from_ref,
     const_mut_refs,
     alloc_layout_extra,
     slice_ptr_get,
@@ -355,12 +353,12 @@ pub const TI: usize = 1024 * GI;
 ///
 /// Shares file mapped memory allocation arena with all it's clones.
 ///
-/// Do not mess up with the `Root` type: this crate cannot figure out if the type
-/// of root object has been changed someway.
+/// Do not mess up with the `Root` type: this crate cannot figure out if the
+/// type of root object has been changed someway.
 #[derive(Debug, Clone)]
-pub struct Holder<'a, Root: 'a> {
+pub struct Holder<Root: Sync + Send> {
     arena: Arc<RwLock<Arena>>,
-    phantom: marker::PhantomData<&'a Root>,
+    phantom: marker::PhantomData<Root>,
 }
 
 /// All possible errors of [`Holder`] and arena initialization.
@@ -383,7 +381,7 @@ impl From<std::io::Error> for Error {
 /// A [`Holder::open`] result.
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl<'a, Root: 'a> Holder<'a, Root> {
+impl<Root: Sync + Send> Holder<Root> {
     /// Initialize new or open existing persistent allocation space (arena) and
     /// get it's [`Holder`].
     ///
@@ -590,11 +588,10 @@ impl<Root, const PAGES_WRITABLE: bool>
         let b = g.mem.arena as *const os::Void;
         let e = unsafe { b.byte_add(s) };
         MEM_MAP.with_borrow_mut(|mb| {
-            let mut c = mb.upper_bound(ops::Bound::Included(&b));
-            if let Some((l, ta)) = c.key_value() {
+            let c = mb.upper_bound(ops::Bound::Included(&b));
+            if let Some((l, ta)) = c.peek_prev() {
                 assert!(unsafe { l.byte_add(ta.size) } <= b);
-                c.move_next();
-                if let Some((l, _)) = c.key_value() {
+                if let Some((l, _)) = c.peek_next() {
                     assert!(*l >= e);
                 }
             }
@@ -665,7 +662,8 @@ unsafe fn memory_violation_handler(
 ) -> bool {
     MEM_MAP.with_borrow(|mb| {
         let c = mb.upper_bound(ops::Bound::Included(&addr));
-        if let Some((l, ta)) = c.key_value() {
+        if let Some((l, ta)) = c.peek_prev() {
+            assert!(l <= &addr);
             if addr < l.byte_add(ta.size) {
                 if extend {
                     extend_file(*l, ta.size, ta.odb_fd, ta.page_size, addr);
@@ -726,8 +724,8 @@ struct Header<Root> {
 
 // Check if the memory map header is ok.
 // If empty, then prepare and commit, otherwise rollback.
-fn prep_header<'a, Root>(
-    holder: &Holder<'a, Root>,
+fn prep_header<Root: Sync + Send>(
+    holder: &Holder<Root>,
     magick: u64,
     addr: usize,
     size: usize,
