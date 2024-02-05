@@ -283,9 +283,8 @@ mod allocator;
 use allocator::new_allocator;
 pub use allocator::{Allocator, ALLOCATION_QUANTUM};
 use allocator::{ByAddressAdapter, BySizeAddressAdapter, FreeBlock};
-#[cfg_attr(unix, path = "unix.rs")]
-#[cfg_attr(windows, path = "windows.rs")]
-mod os;
+mod fd_and_mem;
+use fd_and_mem::{commit, rollback, extend_file, save_old_page, os};
 use os::MapHolder;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -518,66 +517,6 @@ impl<Root: Sync + Send> Holder<Root> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Very internal functions that does not know about Arena structure, but
-// only manipulates file descriptors/handlers and mapped memory.
-
-// Internal rollback.
-// Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
-// access of mem for this thread among threads that have access to this fd.
-// For further use in Holder and Writer.
-unsafe fn rollback<const PAGES_WRITABLE: bool>(
-    fd: os::File,
-    lfd: os::File,
-    mem: *mut os::Void,
-    page_size: usize,
-) {
-    os::seek_begin(lfd);
-    let mut page_no: u32 = 0; // 0 for suppressing compilation error
-    let pgn_ptr = (&mut page_no as *mut u32) as *mut os::Void;
-    while read_exactly(lfd, pgn_ptr, 4) == 4 {
-        let offset = (page_no as usize) * page_size;
-        let addr = mem.byte_add(offset);
-        if !PAGES_WRITABLE {
-            os::mprotect_rw(addr, page_size);
-        }
-        read_exactly(lfd, addr, page_size);
-        os::mprotect_r(addr, page_size);
-    }
-    os::sync(fd);
-    os::truncate(lfd);
-}
-
-// Internal commit.
-// Must be called for flock-ed fd in LOCK_EX mode and guaranteed exclusive
-// access of mem for this thread among threads that have access to this fd.
-// For further use in WriterAccessor.
-unsafe fn commit(fd: os::File, lfd: os::File, mem: *mut os::Void, size: usize) {
-    os::seek_begin(lfd);
-    os::mprotect_r(mem, size);
-    os::sync(fd);
-    os::truncate(lfd);
-}
-
-// Read exactly count bytes or end from the file.
-unsafe fn read_exactly(
-    lfd: os::File,
-    buf: *mut os::Void,
-    count: usize,
-) -> usize {
-    let mut s: usize;
-    let mut rval: usize = 0;
-    let mut c = count;
-    while c > 0 && {
-        s = os::read(lfd, buf, c);
-        s != 0
-    } {
-        rval += s;
-        c -= s;
-    }
-    rval
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // SIGSEGV on write to read-only page and it's handler memory map
 impl<Root, const PAGES_WRITABLE: bool>
     InternalWriter<'_, Root, PAGES_WRITABLE>
@@ -617,42 +556,6 @@ impl<Root, const PAGES_WRITABLE: bool>
             });
         });
     }
-}
-
-unsafe fn save_old_page(
-    mem: *const os::Void,
-    size: usize,
-    log_fd: os::File,
-    page_size: usize,
-    addr: *const os::Void,
-) {
-    let offs = addr.byte_add(1).align_offset(page_size) as isize + 1;
-    let begin = addr.byte_offset(offs - (page_size) as isize);
-    assert_eq!(begin.align_offset(page_size), 0);
-    assert!(begin >= mem);
-    let pn = begin.byte_offset_from(mem) / (page_size as isize);
-    let page_no: u32 = u32::try_from(pn).unwrap();
-    assert!(size / page_size > (page_no as usize));
-    os::write_page(log_fd, page_no, begin, page_size);
-    os::sync(log_fd);
-    os::mprotect_rw(begin as *mut os::Void, page_size);
-}
-
-const EXTEND_BYTES: usize = 8;
-
-unsafe fn extend_file(
-    mem: *const os::Void,
-    size: usize,
-    odb_fd: os::File,
-    page_size: usize,
-    addr: *const os::Void,
-) {
-    let past_addr = unsafe { addr.byte_add(EXTEND_BYTES) };
-    let offset = past_addr.align_offset(page_size);
-    let e = unsafe { past_addr.byte_add(offset) };
-    let offset = usize::try_from(unsafe { e.byte_offset_from(mem) }).unwrap();
-    assert!(offset <= size);
-    os::enlarge(odb_fd, offset);
 }
 
 // Returns true if the violation was successfully handled.
