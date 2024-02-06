@@ -43,8 +43,8 @@ client cache, embedded application data storage, etc.
    formally breaks backward compatibility, but improves correctness and sanity.
  * Fixed 1.77 std::collections::btree\_map::Cursor API backward incompatibility
    issue, minimal Rust version increased to 1.77.
- * `Holder` is now of `Send` trait. - TODO. Check that cannot send without
-   dropping Reader and Writer. 
+ * `Holder` now has `Send` trait.
+ * New doctest for multi-process concurrent read and exclusive write access.
 
 ## To do list
  * Concurrent threads access tests to detect race conditions.
@@ -52,12 +52,9 @@ client cache, embedded application data storage, etc.
    may be too slow. Any suggestions on how to improve this?
  * Main file page `mlock`-ing instead of log file immediate `fsync` in signal
    handler to increase write throughput and decrease latency.
- * Test multi-process concurrent read and exclusive write access.
  * 100% code lines test coverage. How to collect coverage of docs tests?
  * Do less RBTrees traversal on (de/re)allocations by (re)using already
    available pointers.
- * Organize arena pointer and size as a slice in `Arena` struct for less
-   confusion?
 
 ## License
 [Apache License v2.0](tmfalloc/blob?file=LICENSE-APACHE) or

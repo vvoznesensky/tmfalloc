@@ -258,6 +258,53 @@
 //! # let _ = std::fs::remove_file("test7.odb");
 //! # let _ = std::fs::remove_file("test7.log");
 //! ```
+//!
+//! ## Same storage can be used in several threads
+//! ```
+//! ##![feature(allocator_api)]
+//! # let _ = std::fs::remove_file("test8.odb");
+//! # let _ = std::fs::remove_file("test8.log");
+//! # #[cfg(target_pointer_width = "64")]
+//! # const ADDRESS: usize = 0x70ffe6800000;
+//! # #[cfg(target_pointer_width = "64")]
+//! # const SIZE: usize = 5 * tmfalloc::GI;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const ADDRESS: usize = 0xb6800000;
+//! # #[cfg(target_pointer_width = "32")]
+//! # const SIZE: usize = 5 * tmfalloc::MI;
+//! let mut h0 = unsafe {
+//!     tmfalloc::Holder::<char>::open("test8", Some(ADDRESS), SIZE,
+//!                     0xabcdef9876543210, |a| { '.' }) }.unwrap();
+//! use std::{thread, time};
+//! let mut h1 = h0.clone();
+//! thread::spawn(move || {
+//!     let mut w = h1.write();
+//!     *w = '!';
+//!     w.commit();
+//! }).join().expect("The thread has panicked");
+//! let mut h2 = h0.clone();
+//! let mut w = h0.write();
+//! assert_eq!(*w, '!');
+//! *w = '.';
+//! let t = thread::spawn(move || {
+//!     let mut w = h2.write();
+//!     *w = '?';
+//!     w.commit();
+//! });
+//! thread::sleep(time::Duration::from_millis(1));
+//! assert_eq!(*w, '.');
+//! drop(w);
+//! t.join().expect("The thread has panicked");
+//! let mut h3 = h0.clone();
+//! let mut r = h0.read();
+//! thread::spawn(move || {
+//!     let mut r = h3.read();
+//!     assert_eq!(*r, '?');
+//! }).join().expect("The thread has panicked");
+//! assert_eq!(*r, '?');
+//! # let _ = std::fs::remove_file("test8.odb");
+//! # let _ = std::fs::remove_file("test8.log");
+//! ```
 
 #![feature(
     allocator_api,
@@ -333,6 +380,11 @@ struct Arena {
     readers: Mutex<u32>, // Number of readers to apply and revoke flock once.
     page_size: usize,
 }
+
+// MapHolder is not Sync and Send because it unsafely leaks arena and size.
+// Arena seems to be Sync and Send because it hides mem MapHolder.
+unsafe impl Sync for MapHolder {}
+unsafe impl Send for MapHolder {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Auxilliary constants
