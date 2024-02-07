@@ -48,10 +48,14 @@ fn read_recovery() {
     let _ = std::fs::remove_file("test_read_recovery.odb");
     let _ = std::fs::remove_file("test_read_recovery.log");
     type V = Vec<i64, Allocator>;
+#[cfg(target_pointer_width = "64")]
+    const ADDRESS: usize = 0x70ffe6f00000;
+#[cfg(target_pointer_width = "32")]
+    const ADDRESS: usize = 0xb6f00000;
     let mut h = unsafe {
         Holder::<V>::open(
             "test_read_recovery",
-            None,
+            Some(ADDRESS),
             MI,
             0xfedcba9876543210,
             |a| V::new_in(a.clone()),
@@ -152,24 +156,3 @@ fn grow_and_shrink() {
     let _ = std::fs::remove_file("test_grow_and_shrink.log");
 }
 
-/*//! ## Concurrent threads access
-//! ### Single file single mapping parallel read
-//! ```
-//! # let _ = std::fs::remove_file("test7.odb");
-//! # let _ = std::fs::remove_file("test7.log");
-//! //
-//! # let _ = std::fs::remove_file("test7.odb");
-//! # let _ = std::fs::remove_file("test7.log");
-//! ```
-//!
-//! ### Single file multiple mappings parallel read
-//! ```
-//! ```
-//!
-//! ### Multiple files multiple mappings parallel read
-//! ```
-//! ```
-//!
-//! ### Multiple writers race condition detector
-//! ```
-//! ```*/
