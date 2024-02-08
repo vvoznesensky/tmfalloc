@@ -26,7 +26,8 @@ client cache, embedded application data storage, etc.
  * Runs on 32- and 64-bit CPUs.
 
 ## Caveats on current limitations
- * Do not use storage `Holder` in both parent and `fork`-ed child processes.
+ * Do not use the same storage `Holder` in both parent and `fork`-ed child
+   processes.
  * It's not guaranteed if dangling pointers to unmapped storage memory could be
    avoided in case of some non-standard use. In particular,
    `tmfalloc::Allocator` can be cloned (this is a requirement of
@@ -41,8 +42,8 @@ client cache, embedded application data storage, etc.
  * Some documentation and API clearing.
  * In particular, `unsafe` function `Holder::open` replaces `Holder::new` and
    formally breaks backward compatibility, but improves correctness and sanity.
- * Fixed 1.77 std::collections::btree\_map::Cursor API backward incompatibility
-   issue, minimal Rust version increased to 1.77.
+ * Fixed Rust 1.77 `std::collections::btree\_map::Cursor` API backward
+   compatibility drop. Minimal Rust version increased to 1.77.
  * `Holder` now has `Send` trait.
  * New doctest for multi-process concurrent read and exclusive write access.
 

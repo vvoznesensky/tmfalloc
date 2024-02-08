@@ -1,12 +1,12 @@
 [package]
 name = "tmfalloc"
 version = "1.0.0"
-authors = ["Vladimir Voznesenskiy <vvoznesensky@gmail.com>"]
+authors = ["Vladimir Voznesenskiy <vvoznesensky@yandex.ru>"]
 edition = "2021"
 rust-version = "1.77"
 description = "Transactional memory-mapped file allocator"
 readme = "README.md"
-repository = "https://github.com/vvoznesensky/tmfalloc"
+repository = "https://gitflic.ru/project/vvoznesensky/tmfalloc"
 license = "MIT OR Apache-2.0"
 keywords = ["cache", "local", "database", "transaction", "memory"]
 categories = ["caching", "database-implementations",
