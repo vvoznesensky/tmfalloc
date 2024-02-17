@@ -1,4 +1,7 @@
 use super::HeaderOfHeader;
+use super::MEM_MAP;
+use super::os::Void;
+use std::ops;
 use intrusive_collections::intrusive_adapter;
 use intrusive_collections::Bound::Included as IntrusiveIncluded;
 use intrusive_collections::{KeyAdapter, RBTreeLink, UnsafeRef};
@@ -75,14 +78,26 @@ pub fn new_allocator(address: usize) -> Allocator {
     Allocator { address }
 }
 
+fn check_mem_map_exists(address: usize) {
+    let a = address as *const Void;
+    assert!(MEM_MAP.with_borrow(|mb| {
+        let c = mb.upper_bound(ops::Bound::Included(&a));
+        if let Some((l, _)) = c.peek_prev() {
+            *l == a
+        } else { false }
+    }), "tmfalloc::Allocator has been used in non-writing thread");
+}
+
 unsafe impl StdAllocator for Allocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let s = layout.size() + layout.padding_needed_for(ALLOCATION_QUANTUM);
+        check_mem_map_exists(self.address);
         let h = unsafe { (self.address as *mut HeaderOfHeader).as_mut() };
         allocate(s, h.unwrap())
     }
     unsafe fn deallocate(&self, p: NonNull<u8>, layout: Layout) {
         let s = layout.size() + layout.padding_needed_for(ALLOCATION_QUANTUM);
+        check_mem_map_exists(self.address);
         assert!(s % ALLOCATION_QUANTUM == 0);
         let h = unsafe { (self.address as *mut HeaderOfHeader).as_mut() };
         let p = p.as_ptr() as *const FreeBlock;
@@ -94,6 +109,7 @@ unsafe impl StdAllocator for Allocator {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
+        check_mem_map_exists(self.address);
         let os = old.size() + old.padding_needed_for(ALLOCATION_QUANTUM);
         let ns = new.size() + new.padding_needed_for(ALLOCATION_QUANTUM);
         if os == ns {
@@ -126,6 +142,7 @@ unsafe impl StdAllocator for Allocator {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
+        check_mem_map_exists(self.address);
         let os = old.size() + old.padding_needed_for(ALLOCATION_QUANTUM);
         let ns = new.size() + new.padding_needed_for(ALLOCATION_QUANTUM);
         let h = (self.address as *mut HeaderOfHeader).as_mut().unwrap();

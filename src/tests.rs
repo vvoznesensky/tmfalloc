@@ -1,9 +1,11 @@
+use std::alloc::Allocator as AllocatorTrait;
 use super::*;
 use const_str;
 use indoc;
 use std::process::Command;
 use std::vec::Vec;
 use test_binary::build_test_binary;
+use std::alloc::Layout;
 
 #[test]
 fn page_boundary() {
@@ -129,8 +131,8 @@ fn grow_and_shrink() {
     w.commit();
     w.tworoads.truncate(l2);
     w.tworoads.shrink_to_fit();
-    w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n"); //30
-    w.threelittlepigs.extend_from_slice(b"And I, I may tell you, a tale\n"); //60
+    w.threelittlepigs.extend_from_slice(b"Why don't you, sit right back\n");//30
+    w.threelittlepigs.extend_from_slice(b"And I, I may tell you, a tale\n");//60
     let a3 = w.threelittlepigs.as_ptr();
     assert_eq!(a3, a1);
     w.onegin.truncate(l1);
@@ -154,5 +156,31 @@ fn grow_and_shrink() {
     drop(h);
     let _ = std::fs::remove_file("test_grow_and_shrink.odb");
     let _ = std::fs::remove_file("test_grow_and_shrink.log");
+}
+
+#[test]
+#[should_panic]
+fn allocator_leak_should_panic() {
+    let _ = std::fs::remove_file("allocator_leak.odb");
+    let _ = std::fs::remove_file("allocator_leak.log");
+    let mut h = unsafe {
+        Holder::<()>::open("allocator_leak",
+            None,
+            8*KI,
+            0xfedcba9876567890,
+            |_| (),
+        )
+    }
+    .unwrap();
+    let _ = std::fs::remove_file("allocator_leak.odb");
+    let _ = std::fs::remove_file("allocator_leak.log");
+    let w = h.write();
+    let a0 = w.allocator();
+    if let Ok(l) = Layout::from_size_align(2, 2) {
+        let _ = a0.allocate(l);
+        let a1 = a0.clone();
+        drop(w);
+        let _ = a1.allocate(l);
+    }
 }
 

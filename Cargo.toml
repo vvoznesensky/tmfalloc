@@ -1,6 +1,6 @@
 [package]
 name = "tmfalloc"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Vladimir Voznesenskiy <vvoznesensky@yandex.ru>"]
 edition = "2021"
 rust-version = "1.77"

@@ -23,29 +23,25 @@ client cache, embedded application data storage, etc.
    (plus possible file operations costs).
  * Allows allocation arena expansion.
  * Runs on Linux and Windows.
- * Runs on 32- and 64-bit CPUs.
+ * Runs on 32-bit and 64-bit CPUs.
 
 ## Caveats on current limitations
  * Do not use the same storage `Holder` in both parent and `fork`-ed child
    processes.
  * It's not guaranteed if dangling pointers to unmapped storage memory could be
-   avoided in case of some non-standard use. In particular,
-   `tmfalloc::Allocator` can be cloned (this is a requirement of
-   `std::BTreeMap`) and leak out of destructed storage `Holder`.
+   avoided in case of some non-standard use.
  * Memory mapping address cannot be changed after storage initialization. Hence,
    explicit memory mapping address specification on storage initialization is
    recommended.
  * Memory allocation quantum is 32 or 64 bytes on, respectively, 32 or 64-bit
    architectures, that may be percieved as wasteful.
 
-## What's new in 1.0.0
- * Some documentation and API clearing.
- * In particular, `unsafe` function `Holder::open` replaces `Holder::new` and
-   formally breaks backward compatibility, but improves correctness and sanity.
- * Fixed Rust 1.77 `std::collections::btree\_map::Cursor` API backward
-   compatibility drop. Minimal Rust version increased to 1.77.
- * `Holder` now has `Send` trait.
- * New doctest for multi-process concurrent read and exclusive write access.
+## What's new in 1.0.1
+ * `tmfalloc::Allocator::{allocate, deallocate, grow, shrink}` now panic if
+   the current thread has not opened a write transation for the appropriate
+   storage address space. This is to hopefully prevent possible misuse of leaked
+   allocators.
+ * `tests::allocator_leak_should_panic` to test for this panic.
 
 ## To do list
  * Concurrent threads access tests to detect race conditions.
@@ -63,8 +59,8 @@ client cache, embedded application data storage, etc.
 
 ## Author and feedback
 
-Vladimir Voznesenskiy [\<vvoznesensky@gmail.com\>](
-    mailto:vvoznesensky@gmail.com). Looking for a Rust job.
+Vladimir Voznesenskiy [\<vvoznesensky@yandex.ru\>](
+    mailto:vvoznesensky@yandex.ru). Looking for a Rust job.
 
 Feedback is welcome. Please, send me an email, if you need more tests, etc.
 
